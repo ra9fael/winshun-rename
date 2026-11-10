@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/qt/qml/Rename">
+    <file alias="Main.qml">D:/dev/github/winshun-dev/ra9fael.rename/ui/qml/Main.qml</file>
+    <file alias="Tokens.qml">D:/dev/github/winshun-dev/ra9fael.rename/ui/qml/Tokens.qml</file>
+  </qresource>
+</RCC>
+

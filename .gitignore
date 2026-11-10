@@ -1,0 +1,20 @@
+# Build output is never committed or packaged into .wsplugin.
+build/
+build-msvc/
+dist/
+CMakeFiles/
+*.obj
+*.pdb
+*.ilk
+__pycache__/
+*.pyc
+
+# rename.exe is a build artifact (CMake writes it to the source dir, because
+# plugin.json names it as runtime.program). It ships as a release asset
+# (.wsplugin), not through git. A fresh clone rebuilds it with CMake.
+rename.exe
+
+# Probe output: task-level build artifacts and logs live under build/<task>/,
+# and only trimmed excerpts are kept as validation evidence.
+probe/*.log
+probe/*.exe

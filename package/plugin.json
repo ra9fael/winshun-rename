@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LingCore/WinShun-plugins/main/schema/plugin.schema.json",
+  "manifest": 1,
+  "id": "ra9fael.rename",
+  "name": {"zh": "重命名", "en": "Rename"},
+  "version": "0.1.0",
+  "minWinShun": "0.22.0",
+  "description": {
+    "zh": "批量重命名：控件模式用规则链和标志位描述怎么改，文本模式把文件集当缓冲区直接编辑。窗口外观跟随 Win顺 的界面风格",
+    "en": "Bulk rename: control mode describes the change with rule chains and flags, text mode lets you edit the file set as a buffer. The window follows Win顺's interface style"
+  },
+  "author": "ra9fael",
+  "homepage": "https://github.com/ra9fael/winshun-rename",
+  "license": "MIT",
+  "runtime": {
+    "mode": "resident",
+    "program": "rename.exe",
+    "qt": "host",
+    "qtVersion": "6.12",
+    "sandbox": "normal",
+    "start": "lazy",
+    "timeoutMs": 1500,
+    "memoryMB": 128,
+    "idleExitSec": 0,
+    "encoding": "utf-8"
+  },
+  "permissions": ["ui", "files:read", "files:write"],
+  "commands": [
+    {
+      "id": "rename",
+      "keyword": ["rename", "重命名"],
+      "title": {"zh": "重命名", "en": "Rename"},
+      "description": {
+        "zh": "选中文件后从结果菜单进入，窗口里预览每项的新名字再执行",
+        "en": "Reach it from the result menu on selected files; preview every new name in the window before running"
+      },
+      "icon": "glyph:U+E8AC",
+      "hint": {"zh": "先选中文件", "en": "select files first"},
+      "triggers": [{"files": {"kind": "any", "max": 1000, "title": {"zh": "重命名…", "en": "Rename…"}}}]
+    }
+  ]
+}

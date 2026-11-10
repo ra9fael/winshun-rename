@@ -1,0 +1,4 @@
+rename_core 6 0.0139058
+rename_e2e 7 0.105787
+core_purity 6 0.0863768
+---
