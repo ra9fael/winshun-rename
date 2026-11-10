@@ -1,6 +1,6 @@
-# ra9fael.rename UI Specification (Proposal)
+﻿# ra9fael.rename UI Specification (Proposal)
 
-**Status: specification; the UI logic is implemented and tested, the Qt rendering is not.** Bilingual links: [中文](UI-SPEC.md) · [README](README.en.md) · [Design](plugin-design.en.md) · [Test plan](TEST-PLAN.en.md) · [Implementation validation](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md). Wireframes use ASCII; control IDs are proposals pending verification with the real host.
+**Status: specification; the UI logic is implemented and tested, the Qt rendering is not.** Bilingual links: [中文](UI-SPEC.md) · [README](README.en.md) · [Design](plugin-design.en.md) · [Test plan](TEST-PLAN.en.md) · [Implementation validation](docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md). Wireframes use ASCII; control IDs are proposals pending verification with the real host.
 
 ## 1. Entry and main layout
 

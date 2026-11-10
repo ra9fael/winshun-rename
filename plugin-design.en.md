@@ -1,6 +1,6 @@
-# ra9fael.rename Plugin Design Proposal
+﻿# ra9fael.rename Plugin Design Proposal
 
-**Status: requirements document; the core logic is implemented and tested, host integration is not.** Date: 2026-11-10. Follows the workspace `DEVELOPMENT.md` 11-section design skeleton. Chinese: [plugin-design.md](plugin-design.md) · [README](README.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Implementation validation](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
+**Status: requirements document; the core logic is implemented and tested, host integration is not.** Date: 2026-11-10. Follows the workspace `DEVELOPMENT.md` 11-section design skeleton. Chinese: [plugin-design.md](plugin-design.md) · [README](README.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Implementation validation](docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
 
 ## 1. Verdict
 
@@ -395,7 +395,7 @@ This task delivers only eight bilingual documents; it creates no manifest, sourc
 
 ## 9. Test plan (L0-L5)
 
-Per-case rows and traceability are in [TEST-PLAN.en.md](TEST-PLAN.en.md). L0 manifest/package static checks; L1 pure core; L2 fake filesystem/host dependency injection; L3 real WinShun host round-trip (completion gate); L4 Windows/SMB interactive E2E; L5 calibration and release. L1/L2 have run (85 unit cases green); the e2e part of L3 has run (14 real-rename assertions green); **the host round-trip itself has not run**, and L4/L5 are all unexecuted. Quantified targets are budgets, not measurements. The measured record is in the [implementation validation](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
+Per-case rows and traceability are in [TEST-PLAN.en.md](TEST-PLAN.en.md). L0 manifest/package static checks; L1 pure core; L2 fake filesystem/host dependency injection; L3 real WinShun host round-trip (completion gate); L4 Windows/SMB interactive E2E; L5 calibration and release. L1/L2 have run (85 unit cases green); the e2e part of L3 has run (14 real-rename assertions green); **the host round-trip itself has not run**, and L4/L5 are all unexecuted. Quantified targets are budgets, not measurements. The measured record is in the [implementation validation](docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
 
 ## 10. Honest notes
 
@@ -411,7 +411,7 @@ Per-case rows and traceability are in [TEST-PLAN.en.md](TEST-PLAN.en.md). L0 man
 - **No `PowerRenameManager`-style `PeekMessage` pump.** Under Qt this becomes `QEventLoop` plus signals and slots.
 - **No hand-rolled two-phase rename with a recovery journal.** Use `IFileOperation` plus the Shell undo stack plus a read-only batch journal.
 
-**Implemented and tested:** the rule core (splitting, the three finalization steps, four case transforms, date/counter/metadata templates, rule chains, oil parsing and diffing, batch collision detection), the `IFileOperation` executor (deepest-first, conflict refusal, no auto-renaming), and dual-mode status agreement (`Presenter`). Evidence: 85 unit cases and 14 real-rename assertions, see the [implementation validation](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
+**Implemented and tested:** the rule core (splitting, the three finalization steps, four case transforms, date/counter/metadata templates, rule chains, oil parsing and diffing, batch collision detection), the `IFileOperation` executor (deepest-first, conflict refusal, no auto-renaming), and dual-mode status agreement (`Presenter`). Evidence: 85 unit cases and 14 real-rename assertions, see the [implementation validation](docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
 
 **Unverified:** the host `files` trigger contract and minimum version; the native plugin template/API; whether the shared Qt contract actually works for this plugin (the Qt window code has never been compiled); Qt regex differences from ECMAScript/Boost; Windows file identity and case-only/swap renames; `IFileOperation` behavior over SMB; whether undo actually works; the actual state after a crash; end-to-end metadata reads; accessibility and packaging. The host round-trip (L3) has not run.
 

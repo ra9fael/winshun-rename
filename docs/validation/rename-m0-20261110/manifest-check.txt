@@ -1,0 +1,16 @@
+﻿# manifest field check — 2026-11-10 04:40
+json_parse: ok
+id: ra9fael.rename
+version: 0.0.1
+minWinShun: 0.22.0
+runtime.mode: resident
+runtime.program: rename.exe
+runtime.sandbox: normal
+permissions: ui, files:read, files:write
+commands: 1
+command[0].id: rename
+command[0].keyword: rename, 重命名
+command[0].triggers.files.kind: any
+command[0].triggers.files.max: 1000
+schema required fields (manifest,id,name,version,commands): True
+permission enum check: True

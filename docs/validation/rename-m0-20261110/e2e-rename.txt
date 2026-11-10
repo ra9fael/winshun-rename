@@ -1,0 +1,5 @@
+﻿# rename_e2e output excerpt (recorded 2026-11-10, MSVC, build-msvc)
+# Trimmed excerpt per workspace evidence-size rules.
+
+2/3 Test #2: rename_e2e .......................   Passed    0.60 sec
+100% tests passed, 0 tests failed out of 3

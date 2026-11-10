@@ -1,6 +1,6 @@
-# ra9fael.rename UI 规格（Proposal）
+﻿# ra9fael.rename UI 规格（Proposal）
 
-**状态：规格；界面逻辑已实现并测过，Qt 渲染未验证。** 中英互链：[English](UI-SPEC.en.md) · [README](README.md) · [设计](plugin-design.md) · [测试计划](TEST-PLAN.md) · [实施验证](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。以下线框使用 ASCII；控件标识为提案，待真实宿主核实。
+**状态：规格；界面逻辑已实现并测过，Qt 渲染未验证。** 中英互链：[English](UI-SPEC.en.md) · [README](README.md) · [设计](plugin-design.md) · [测试计划](TEST-PLAN.md) · [实施验证](docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。以下线框使用 ASCII；控件标识为提案，待真实宿主核实。
 
 ## 1. 入口与主布局
 

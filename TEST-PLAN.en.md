@@ -1,10 +1,10 @@
-# ra9fael.rename Test Plan (Proposal)
+﻿# ra9fael.rename Test Plan (Proposal)
 
 **Status: some cases executed.** Bilingual links: [中文](TEST-PLAN.md) · [README](README.en.md) · [Design](plugin-design.en.md) · [UI specification](UI-SPEC.en.md).
 
 ## Execution progress
 
-The cases below have automated evidence and are now "executed"; the rest remain "not run". The full measured record is in the [implementation validation](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
+The cases below have automated evidence and are now "executed"; the rest remain "not run". The full measured record is in the [implementation validation](docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
 
 | Executed | Evidence |
 |---|---|

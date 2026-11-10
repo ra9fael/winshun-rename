@@ -1,10 +1,10 @@
-# ra9fael.rename 测试计划（Proposal）
+﻿# ra9fael.rename 测试计划（Proposal）
 
 **状态：部分用例已执行。** 双语互链：[English](TEST-PLAN.en.md) · [README](README.md) · [设计](plugin-design.md) · [UI 规格](UI-SPEC.md)。
 
 ## 执行进度
 
-以下用例已有自动化证据，状态改为"已执行"；其余仍为"未执行"。完整实测记录见 [实施验证](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
+以下用例已有自动化证据，状态改为"已执行"；其余仍为"未执行"。完整实测记录见 [实施验证](docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
 
 | 已执行 | 证据 |
 |---|---|

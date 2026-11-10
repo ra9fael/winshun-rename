@@ -1,4 +1,4 @@
-﻿**状态：M0–M5 已执行；宿主集成未验证。** 中英互链：[English](DEVELOPMENT-PLAN.en.md) · [README](README.md) · [设计](plugin-design.md) · [UI 规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [实施验证](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
+﻿**状态：M0–M5 已执行；宿主集成未验证。** 中英互链：[English](DEVELOPMENT-PLAN.en.md) · [README](README.md) · [设计](plugin-design.md) · [UI 规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [实施验证](docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
 
 本计划把设计的 20 条 RN-FR 与测试计划的 46 条用例排成可执行的里程碑。需求与用例编号不在此重复定义，只引用。
 

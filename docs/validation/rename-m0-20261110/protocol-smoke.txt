@@ -1,0 +1,16 @@
+﻿# protocol smoke test - the "files" trigger path, 2026-11-10
+#
+# A hand-written JSON-RPC session piped into rename.exe. This proves the protocol
+# wiring and the P1 probe logging work. It is NOT a real host round-trip: no Explorer, no
+# host process, no permission consent.
+#
+# Note: a JSON line with an invalid escape (for example a raw "C:\tmp\a.txt" with
+# an unescaped backslash) makes the SDK log "not JSON" and stop reading. The host
+# always sends valid JSON, so this only bit the hand-written test.
+{"id":1,"jsonrpc":"2.0","result":{"name":"plugin","protocolVersion":"1"}}
+[rename] files trigger: count=2 chars=24
+[rename]   C:\tmp\a.txt
+[rename]   C:\tmp\b.txt
+[rename] enumerated 2 item(s)
+{"id":2,"jsonrpc":"2.0","result":{"effects":[{"text":"已收到 2 项；规则编辑窗口尚未接入（M4）","type":"notify"}]}}
+{"id":3,"jsonrpc":"2.0","result":{}}

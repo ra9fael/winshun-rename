@@ -1,6 +1,6 @@
 ﻿# ra9fael.rename Development Plan (Proposal)
 
-**Status: M0–M5 executed; host integration unverified.** Bilingual links: [涓枃](DEVELOPMENT-PLAN.md) · [README](README.en.md) · [Design](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Implementation validation](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
+**Status: M0–M5 executed; host integration unverified.** Bilingual links: [涓枃](DEVELOPMENT-PLAN.md) · [README](README.en.md) · [Design](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Implementation validation](docs/validation/rename-m0-20261110/IMPLEMENTATION.en.md).
 
 This plan sequences the design's 20 `RN-FR` requirements and the test plan's 46 cases into executable milestones. Requirement and case IDs are referenced, never redefined here.
 

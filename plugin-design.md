@@ -1,6 +1,6 @@
-# ra9fael.rename 插件设计提案
+﻿# ra9fael.rename 插件设计提案
 
-**状态：需求文档；核心逻辑已实现并测过，宿主集成未验证。** 日期：2026-11-10。遵循工作台 `DEVELOPMENT.md` 的 11 节设计骨架。英文：[plugin-design.en.md](plugin-design.en.md) · [README](README.md) · [UI 规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [实施验证](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
+**状态：需求文档；核心逻辑已实现并测过，宿主集成未验证。** 日期：2026-11-10。遵循工作台 `DEVELOPMENT.md` 的 11 节设计骨架。英文：[plugin-design.en.md](plugin-design.en.md) · [README](README.md) · [UI 规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [实施验证](docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
 
 ## 1. 关键裁决（Verdict）
 
@@ -395,7 +395,7 @@ AI 首版非核心，不请求 `network`。未来如提出 AI 功能，必须单
 
 ## 9. 测试计划（L0–L5）
 
-逐用例行及 traceability 见 [TEST-PLAN.md](TEST-PLAN.md)。L0 manifest/打包静态校验；L1 纯核心；L2 fake 文件系统/宿主依赖注入；L3 Win顺真实宿主往返（完成门槛）；L4 Windows/SMB 真机交互；L5 标定与发布。L1/L2 已执行（85 条单元用例全绿），L3 的 e2e 部分已执行（14 项真实改名断言全绿），**宿主往返本身未执行**，L4/L5 全部未执行。量化目标是预算，不能代替测量。实测记录见 [实施验证](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
+逐用例行及 traceability 见 [TEST-PLAN.md](TEST-PLAN.md)。L0 manifest/打包静态校验；L1 纯核心；L2 fake 文件系统/宿主依赖注入；L3 Win顺真实宿主往返（完成门槛）；L4 Windows/SMB 真机交互；L5 标定与发布。L1/L2 已执行（85 条单元用例全绿），L3 的 e2e 部分已执行（14 项真实改名断言全绿），**宿主往返本身未执行**，L4/L5 全部未执行。量化目标是预算，不能代替测量。实测记录见 [实施验证](docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
 
 ## 10. 诚实笔记（Honest notes）
 
@@ -411,7 +411,7 @@ AI 首版非核心，不请求 `network`。未来如提出 AI 功能，必须单
 - **不抄 `PowerRenameManager` 的 `PeekMessage` 消息泵**。Qt 下改用 `QEventLoop` + 信号槽。
 - **不抄自研两阶段改名 + 恢复日志**。改用 `IFileOperation` + Shell 撤销栈 + 只读批次清单。
 
-**已实现并测过：**规则核心（拆分、收尾三步、四档大小写、日期/计数/元数据模板、规则链、oil 解析与差异、批次冲突检测）、`IFileOperation` 执行器（深度倒序、冲突拒绝、不自动改名）、双模式状态一致性（`Presenter`）。证据：85 条单元用例、14 项真实改名断言，见 [实施验证](../WinShun/docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
+**已实现并测过：**规则核心（拆分、收尾三步、四档大小写、日期/计数/元数据模板、规则链、oil 解析与差异、批次冲突检测）、`IFileOperation` 执行器（深度倒序、冲突拒绝、不自动改名）、双模式状态一致性（`Presenter`）。证据：85 条单元用例、14 项真实改名断言，见 [实施验证](docs/validation/rename-m0-20261110/IMPLEMENTATION.md)。
 
 **未验证：**宿主 `files` trigger 契约与最低版本、native 插件模板/API、共享 Qt 契约在本插件上的实际可用性（Qt 窗口代码从未编译）、Qt regex 与 ECMAScript/Boost 的差异、Windows 文件身份与 case-only/交换改名、`IFileOperation` 在 SMB 上的行为、撤销是否真的生效、崩溃后的实际状态、元数据的端到端读取、无障碍与打包。宿主往返（L3）未执行。
 

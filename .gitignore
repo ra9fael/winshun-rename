@@ -1,6 +1,7 @@
-# Build output is never committed or packaged into .wsplugin.
+﻿# Build output is never committed or packaged into .wsplugin.
 build/
 build-msvc/
+build-qt/
 dist/
 CMakeFiles/
 *.obj
