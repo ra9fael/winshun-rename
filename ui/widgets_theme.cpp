@@ -1,6 +1,6 @@
 #include "ui/widgets_theme.h"
 
-#include <QFontDatabase>
+#include <QFontInfo>
 #include <QPalette>
 #include <QStringList>
 #include <QWidget>
@@ -143,14 +143,21 @@ Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize,
     // Text mode is a vim/editor surface: pick a monospace family that is really
     // installed (Cascadia Mono ships with Windows Terminal, not with Windows),
     // and keep the CJK UI font as a fallback so Chinese file names still render.
-    const QStringList families = QFontDatabase::families();
+    // Probed with QFontInfo instead of QFontDatabase::families(): enumerating
+    // every installed family loads the whole font library (hundreds of MB and
+    // seconds on a machine with many fonts), which delayed the first paint.
     QString monoFamily;
     for (const QString& candidate : {QStringLiteral("Cascadia Mono"),
                                      QStringLiteral("Cascadia Code"),
                                      QStringLiteral("Consolas"),
                                      QStringLiteral("Courier New")})
     {
-        if (families.contains(candidate, Qt::CaseInsensitive))
+        QFont probe(candidate);
+        probe.setStyleHint(QFont::Monospace);
+        probe.setPixelSize(t.fontBody);
+        const QFontInfo info(probe);
+        if (info.fixedPitch()
+            && info.family().compare(candidate, Qt::CaseInsensitive) == 0)
         {
             monoFamily = candidate;
             break;

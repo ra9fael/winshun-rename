@@ -326,7 +326,7 @@ void VimTextFilter::updateBlockCaret()
     const QColor glyph = palette.color(QPalette::Base);
     format.setBackground(fill);
     format.setForeground(glyph);
-    if (selection.cursor.atBlockEnd() || selection.cursor.atBlockStart())
+    if (selection.cursor.atBlockEnd())
     {
         // Nothing under the cursor (empty line, or past the last char): fill the
         // rest of the line so the cursor is still visible.

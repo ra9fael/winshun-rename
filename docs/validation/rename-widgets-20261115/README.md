@@ -121,8 +121,8 @@ crash did not recur with the font/symbol fix and `memoryMB: 256`.
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
 Widgets added to the shared-Qt contract). The installed experimental package is
-`dist/ra9fael.rename-0.4.2.wsplugin` (3,365,022 bytes, SHA-256
-`00401d20ffc3e148abbf476c41dd1842b97ee881d3bdd4ab4bd1b7c1dd343ccb`).
+`dist/ra9fael.rename-0.4.2.wsplugin` (3,365,035 bytes, SHA-256
+`72fe245818f6f413919dabc2e3f5061dfd38e5b38129decae556413449bdf869`).
 
 ## Vim mode (0.4.2 conformance round)
 
@@ -132,9 +132,9 @@ C++20 library in this repo as the `vendor/vimcore` submodule — no Qt, no Win32
 49 tests of its own (Normal/Insert/Visual, motions, operators, counts, register,
 vim-style undo/redo).
 
-| Off (default) | On |
+| On (Normal) | Off (default) |
 |---|---|
-| ![vim off](vim-off.png) | ![vim normal](vim-normal.png) |
+| ![vim normal](vim-installed-042.png) | ![vim off](vim-off.png) |
 
 Design points worth knowing:
 
@@ -159,8 +159,9 @@ Design points worth knowing:
   `iw`/`aw`, `%`, Visual `o`/`u`/`U`/`~`/`p`/`J` are covered.
 - **Vim-looking UI.** Normal, Visual and Replace use an inverted block cursor;
   Insert keeps Qt's thin native cursor so IME remains intact. The text editor
-  now chooses a real monospace face (Cascadia Mono/Code, Consolas, Courier New)
-  with the host CJK UI font as fallback.
+  probes a short monospace fallback list with `QFontInfo` (not a full system
+  font-family enumeration, which caused a ~260 MB startup spike) and uses the
+  host CJK UI font as fallback.
 - **Preview is visible while editing.** The table highlights the `/id` row under
   the Vim cursor, and its target name refreshes from a Normal-mode edit after
   the existing 120ms buffer debounce. Window regression tests exercise that full
@@ -184,7 +185,7 @@ Verification:
 | `vim_window` tests | 14/14 pass — Esc/Insert regressions plus R, Ctrl+A, preview target refresh and current-row highlight |
 | `rename` suite | 6/6 ctest targets pass (`vim_window`, `vim_qt`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`) |
 | Installed 0.4.2 | `ws plugin install`: `ra9fael.rename 0.4.2`, `enabled=True`, `status=ready` |
-| Installed probe | process remained alive; 259.2 MB working set / 136.0 MB private. The automated grab hook did not emit a PNG in this run, so no screenshot claim is made. |
+| Installed probe | `alive=True`, ~42.9 MB working set; grab callback wrote `vim-installed-042.png` (822×616). The screenshot shows the active Vim badge, a one-character block cursor at `/`, mono buffer text and the current preview row highlight. |
 | Settings round-trip | run 1 wrote `{"vimMode":true}`; run 2 without the grab hook still showed `-- NORMAL --` |
 | Submodule | pinned to public vimcore tag `v0.2.1` (`b9ae7b3`), following the conformance release `v0.2.0` |
 
