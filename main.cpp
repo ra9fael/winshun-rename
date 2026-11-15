@@ -138,7 +138,7 @@ protected:
                 zh ? "在此文件夹批量重命名…" : "Batch rename in this folder…",
                 zh ? "打开批量重命名窗口，列出这个文件夹里的项目 · " + browsed
                    : ("Open the batch rename window on this folder · " + browsed));
-            here.withIcon("glyph:U+E8AC");
+            here.withIcon("glyph:U+E3B4");
             here.withData(winshun::Json::Object {{"openFolder", browsed}});
             here.withScore(100);
             rows.push_back(std::move(here));
@@ -146,10 +146,10 @@ protected:
         else
         {
             winshun::Item hint("batch.hint",
-                zh ? "批量重命名" : "Batch Rename",
-                zh ? "选中文件或文件夹后右键；或在文件夹标签里输入本关键词"
-                   : "Select a file or folder and right-click; or type this keyword on a folder tab");
-            hint.withIcon("glyph:U+E8AC");
+                zh ? "打开批量重命名…" : "Open Batch Rename…",
+                zh ? "按 Enter 打开窗口；窗口里可以选择文件夹"
+                   : "Press Enter to open the window; choose a folder there");
+            hint.withIcon("glyph:U+E3B4");
             hint.withData(winshun::Json::Object {{"openWindow", true}});
             rows.push_back(std::move(hint));
         }
@@ -173,9 +173,14 @@ protected:
 
         if (payload["openWindow"].toBool(false))
         {
+#ifdef RENAME_HAVE_QT
+            rename_host::Show({}, false); // empty window with the directory bar
+            return {winshun::effect::hide()};
+#else
             return {winshun::effect::notify(chinese()
-                ? "批量重命名：选中一个文件或文件夹后右键"
-                : "Batch Rename: select a file or folder, then right-click")};
+                ? "批量重命名需要带 Qt 的构建"
+                : "Batch Rename needs the Qt build")};
+#endif
         }
 
         if (a.trigger != "files" || a.files.empty())

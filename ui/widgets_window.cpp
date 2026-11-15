@@ -286,7 +286,10 @@ Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
     setWindowTitle(T("批量重命名", "Batch Rename"));
     setMinimumSize(700, 520);
     resize(822, 616);
-    setWindowIcon(QIcon(QStringLiteral(":/resources/rename.ico")));
+    QIcon windowIcon;
+    windowIcon.addFile(QStringLiteral(":/resources/icons/app-16.png"));
+    windowIcon.addFile(QStringLiteral(":/resources/icons/app-256.png"));
+    setWindowIcon(windowIcon);
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowFlag(Qt::WindowContextHelpButtonHint, false);
 

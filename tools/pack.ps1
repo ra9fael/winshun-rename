@@ -42,7 +42,6 @@ try {
 
     Copy-Item $exe (Join-Path $stage "rename.exe")
     Copy-Item (Join-Path $root "package\plugin.json") (Join-Path $stage "plugin.json")
-    Copy-Item (Join-Path $root "resources\rename.png") (Join-Path $stage "rename.png")
 
     # Qt Widgets is not in WinShun's shared-Qt contract yet. Until it is, the
     # plugin must carry the one extra DLL beside its exe; Windows finds it there

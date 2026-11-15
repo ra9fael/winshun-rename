@@ -170,8 +170,8 @@ if(RENAME_BUILD_QT)
         PREFIX "/"
         BASE "${CMAKE_SOURCE_DIR}"
         FILES
-            resources/rename.ico
-            resources/rename.png
+            resources/icons/app-16.png
+            resources/icons/app-256.png
     )
     if(MSVC)
         target_compile_options(rename_widgets PRIVATE /utf-8 /W4 /permissive-)
