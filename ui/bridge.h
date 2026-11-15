@@ -230,6 +230,12 @@ public:
     Q_INVOKABLE bool savePreset(const QString& name);
     Q_INVOKABLE void deletePreset(const QString& name);
 
+    // ---- vim mode (text mode only) ---------------------------------------------
+    // Off by default and remembered in <dataDir>/settings.json. Off means the
+    // text editor behaves exactly as it did before vim mode existed.
+    Q_INVOKABLE bool vimEnabled() const;
+    Q_INVOKABLE void setVimEnabled(bool enabled);
+
     // Called by the host when a `files` selection arrives.
     Q_INVOKABLE void setSelection(const QStringList& paths, bool recursive);
         // "Open the rename window in this folder": the folder's direct children
@@ -298,6 +304,11 @@ private:
     };
     mutable std::vector<Preset> m_presets;
     mutable bool m_presetsLoaded = false;
+    // Vim mode is a per-user preference, not per-batch: it survives folders and
+    // selections, so it lives here instead of in the presenter. `mutable` because
+    // the getter lazily loads settings and caches the answer.
+    mutable bool m_vimEnabled = false;
+    mutable bool m_settingsLoaded = false;
     std::vector<rename_win::CollectedItem> m_collected;
     std::wstring m_dataDir;
     QVariantMap m_look;

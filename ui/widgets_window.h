@@ -26,6 +26,7 @@ class Bridge;
 
 namespace rename_widgets {
 
+class VimTextFilter;
 struct Theme;
 
 class Window : public QWidget
@@ -78,8 +79,10 @@ private:
     QString T(const char* zhText, const char* enText) const;
     bool zh() const;
     void ApplyTitleBar();
+    void RefreshVim();
 
     rename_qml::Bridge* m_bridge = nullptr;
+    VimTextFilter* m_vim = nullptr;
 
     Theme* m_theme = nullptr;
 
@@ -117,6 +120,10 @@ private:
     QToolButton* m_caseButtons[4] = {nullptr, nullptr, nullptr, nullptr};
 
     QPlainTextEdit* m_text = nullptr;
+    // Vim mode: the chip that toggles it and the badge that shows the core's
+    // current mode. Off unless the user turned it on (persisted in settings).
+    QToolButton* m_vimToggle = nullptr;
+    QLabel* m_vimBadge = nullptr;
 
     QCheckBox* m_selectAll = nullptr;
     QLabel* m_originalHeader = nullptr;

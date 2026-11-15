@@ -6,6 +6,17 @@
 
 这个分支把窗口从 Qt Quick 换成了 Qt Widgets：`ui/widgets_window.*` 是新的表格、规则栏和文本编辑器，`ui/qt_host.cpp` 只负责创建 `QApplication` 和窗口。核心、Presenter、Bridge 和执行器没变。构建仍用 `-DRENAME_BUILD_QT=ON`，但需要 Qt Widgets；`tools/pack.ps1` 会把 `Qt6Widgets.dll` 一起装进包（WinShun 的共享 Qt 契约目前还没有 Widgets）。实测、截图和未验证项见 [docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md)。
 
+## Vim 模式（0.4.0，默认关闭）
+
+文本模式支持 Vim 按键。核心是独立的可移植库 [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore)（纯 C++20，无 Qt/Win32），以 submodule 挂在 `vendor/vimcore`；Qt 适配层 `ui/vim_qt.*` 留在本仓库。细节见 [docs/VIM-MODE.md](docs/VIM-MODE.md)。
+
+```bash
+git clone --recurse-submodules <repo>      # 或者克隆后补一步：
+git submodule update --init --recursive
+```
+
+没有 submodule 时 CMake 会直接报错并给出上面这行命令，而不是静默少掉 Vim 模式。
+
 ## 本地试用（不经宿主）
 
 `rename-ui.exe` 是独立的窗口 wrapper，用来在没有 Win顺 的情况下验证界面与逻辑；它链接的正是插件窗口的同一份代码。

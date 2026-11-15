@@ -121,8 +121,46 @@ crash did not recur with the font/symbol fix and `memoryMB: 256`.
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
 Widgets added to the shared-Qt contract). The installed experimental package is
-`dist/ra9fael.rename-0.3.0.wsplugin` (3,330,787 bytes, SHA-256
-`1db9d4b7c7a1849331c582282f8dbcd6bc4f5a33bc36cbe209544adb8db02d4c`).
+`dist/ra9fael.rename-0.4.0.wsplugin` (3,351,698 bytes, SHA-256
+`3aa5cab2afa4db5be888b71250f7f78ee2317ada7406e6d8939ca53afc6cd55a`).
+
+## Vim mode (0.4.0)
+
+The text page has a `Vim` chip and a mode badge. Vim keys come from
+[`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore), a portable
+C++20 library in this repo as the `vendor/vimcore` submodule — no Qt, no Win32,
+49 tests of its own (Normal/Insert/Visual, motions, operators, counts, register,
+vim-style undo/redo).
+
+| Off (default) | On |
+|---|---|
+| ![vim off](vim-off.png) | ![vim normal](vim-normal.png) |
+
+Design points worth knowing:
+
+- **Insert mode is native.** Only Esc is intercepted there, so IME (Chinese
+  input), clipboard, drag-and-drop and platform editing behave exactly as
+  before. Intercepting composition events would have been the easy way to break
+  typing.
+- **Window chords keep working**: Ctrl+S runs the batch, Ctrl+Z/Ctrl+Y stay the
+  host undo, Alt/F-keys pass through. Ctrl+R is the one Ctrl chord the editor
+  takes (vim redo).
+- **The core owns undo.** `u`/Ctrl+R walk vimcore's own snapshots, so they never
+  disturb the widget's undo history, and one insert session is one undo step.
+- **Off by default, remembered.** The choice lives in `<dataDir>/settings.json`
+  as `{"vimMode":true}`; a second launch restores it with no grab hook involved
+  (`vim-persisted.png` above).
+
+Verification:
+
+| Check | Result |
+|---|---|
+| `vendor/vimcore` tests | 49/49 pass (portable, no Qt) |
+| `vim_qt` adapter tests | 14/14 pass — real QKeyEvents against a `QPlainTextEdit` (offscreen) |
+| `rename` suite | 5/5 ctest targets pass (`vim_qt`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`) |
+| Installed 0.4.0, text mode + Vim on | 45.4 MB working set / 8.4 MB private |
+| Settings round-trip | run 1 wrote `{"vimMode":true}`; run 2 without the grab hook still showed `-- NORMAL --` |
+| Submodule | `git submodule add https://github.com/ra9fael/winshun-vimcore vendor/vimcore`, pinned to `1073ec8` |
 
 ## Rule chain (0.3.0)
 
@@ -158,6 +196,8 @@ colour.
 | Widgets, final, two files | 50 MB | 12.5 MB | peak paged 27 MB |
 | Widgets, final, Chinese filenames | 50 MB | 12.1 MB | peak paged 27 MB |
 | Widgets under host Qt, files trigger | 42 MB | 7.6 MB | installed 0.2.3, single file → parent folder |
+| Widgets, rule chain + 4 items, chain of 2 rules | 45 MB | 8.6 MB | dev build, `RENAME_GRAB_RULE` |
+| Widgets, installed 0.4.0, text mode + Vim on | 45.4 MB | 8.4 MB | vimcore adds no measurable cost |
 
 ### Why the first Widgets number was wrong
 

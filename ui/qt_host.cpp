@@ -131,6 +131,8 @@ void GrabIfAsked(Ui* ui)
     const QStringList rule = qEnvironmentVariable("RENAME_GRAB_RULE").split(QLatin1Char('\n'));
     if (rule.size() == 2)
         ui->bridge->setSingleRule(0, 0, rule[0], rule[1], true);
+    if (qEnvironmentVariableIsSet("RENAME_GRAB_VIM"))
+        ui->bridge->setVimEnabled(qEnvironmentVariable("RENAME_GRAB_VIM") != QLatin1String("0"));
     // A two-line rule plus a third line is a chain: scope/match stay defaults
     // and the extra rules are literal first-occurrence replaces, enough to
     // screenshot a chain preview.

@@ -1,6 +1,7 @@
 #include "ui/widgets_window.h"
 
 #include "ui/bridge.h"
+#include "ui/vim_qt.h"
 #include "ui/widgets_theme.h"
 
 #include <QAbstractButton>
@@ -644,6 +645,28 @@ void Window::BuildUi()
     textLayout->setContentsMargins(0, 0, 0, 0);
     textLayout->setSpacing(0);
 
+    // The text page's own header: the vim toggle on the left, the mode badge on
+    // the right. Vim mode is off by default, so this row reads as an option and
+    // not as a new required step.
+    auto* textHead = new QHBoxLayout;
+    textHead->setContentsMargins(0, 0, 0, 0);
+    textHead->setSpacing(8);
+    m_vimToggle = new QToolButton(textPage);
+    m_vimToggle->setText(T("Vim", "Vim"));
+    m_vimToggle->setCheckable(true);
+    m_vimToggle->setObjectName(QStringLiteral("chipButton"));
+    m_vimToggle->setCursor(Qt::PointingHandCursor);
+    m_vimToggle->setFixedHeight(26);
+    m_vimToggle->setToolTip(T("Vim 按键模式（默认关闭）", "Vim key bindings (off by default)"));
+    textHead->addWidget(m_vimToggle);
+    textHead->addStretch(1);
+    m_vimBadge = new QLabel(textPage);
+    m_vimBadge->setObjectName(QStringLiteral("caption"));
+    m_vimBadge->setToolTip(T("当前 Vim 模式", "Current vim mode"));
+    textHead->addWidget(m_vimBadge);
+    textLayout->addLayout(textHead);
+    textLayout->addSpacing(8);
+
     auto* textHint = new QLabel(
         T("每行一项：/<编号> 新名字；文件夹以 / 结尾。Ctrl+S 执行。",
           "One item per line: /<id> new name; folders end with /. Ctrl+S runs it."),
@@ -943,6 +966,23 @@ void Window::ConnectBridge()
         if (!m_syncing)
             m_textTimer->start();
     });
+
+    // ---- vim mode ------------------------------------------------------------
+    // The filter is installed once and gated by its own enabled flag; the toggle
+    // only flips that flag and remembers it.
+    m_vim = new VimTextFilter(m_text, this);
+    connect(m_vim, &VimTextFilter::statusChanged, this, [this](const QString& status) {
+        if (m_vimBadge)
+            m_vimBadge->setText(m_vim->enabled() ? status : QString());
+    });
+    connect(m_vimToggle, &QToolButton::toggled, this, [this](bool checked) {
+        if (m_syncing)
+            return;
+        m_bridge->setVimEnabled(checked);
+        m_vim->setEnabled(checked);
+        RefreshVim();
+        m_text->setFocus();
+    });
 }
 
 QString Window::T(const char* zhText, const char* enText) const
@@ -1020,6 +1060,22 @@ void Window::SyncRuleSelection()
     m_syncing = false;
 }
 
+void Window::RefreshVim()
+{
+    if (!m_bridge || !m_vimToggle || !m_vim)
+        return;
+    const bool enabled = m_bridge->vimEnabled();
+    m_syncing = true;
+    m_vimToggle->setChecked(enabled);
+    m_syncing = false;
+    m_vim->setEnabled(enabled);
+    m_vimBadge->setVisible(enabled);
+    m_vimBadge->setText(enabled ? m_vim->statusText() : QString());
+    m_vimToggle->setToolTip(enabled
+        ? T("Vim 按键模式已开启（点此关闭）", "Vim key bindings are on (click to turn off)")
+        : T("Vim 按键模式（默认关闭）", "Vim key bindings (off by default)"));
+}
+
 void Window::RefreshPresets()
 {
     if (!m_bridge || !m_preset)
@@ -1057,6 +1113,9 @@ void Window::SyncTextEditor()
     m_syncing = true;
     m_text->setPlainText(m_bridge->buffer());
     m_syncing = false;
+    // The vim core holds its own copy of the text; a reload invalidates it.
+    if (m_vim)
+        m_vim->resync();
 }
 
 void Window::SyncPath()
@@ -1199,6 +1258,7 @@ void Window::RefreshAll()
     RefreshFooter();
     SyncPath();
     SyncTextEditor();
+    RefreshVim();
 }
 
 void Window::Retranslate()
@@ -1236,6 +1296,7 @@ void Window::Retranslate()
 
     m_find->setPlaceholderText(T("查找", "Find"));
     m_replace->setPlaceholderText(T("替换为", "Replace with"));
+    m_vimToggle->setText(T("Vim", "Vim"));
     m_regex->setText(T("使用正则表达式", "Use regular expressions"));
     m_matchAll->setText(T("替换全部匹配", "Match all occurrences"));
     m_caseSensitive->setText(T("区分大小写", "Case sensitive"));

@@ -153,14 +153,28 @@ if(RENAME_BUILD_QT)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
     qt_standard_project_setup()
 
+    # ---- vimcore: the portable modal editing core ---------------------------
+    # A git submodule (vendor/vimcore, github.com/ra9fael/winshun-vimcore) with
+    # no Qt or Win32 dependency of its own; only the Qt build needs it, because
+    # only the text editor uses it. `--recurse-submodules` is documented in the
+    # README: without the submodule the file is simply absent and this branch
+    # fails loudly instead of silently dropping vim mode.
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/vendor/vimcore/CMakeLists.txt")
+        message(FATAL_ERROR
+            "vendor/vimcore is missing. Run: git submodule update --init --recursive")
+    endif()
+    set(VIMCORE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(vendor/vimcore EXCLUDE_FROM_ALL)
+
     add_library(rename_widgets STATIC
         ui/bridge.cpp
         ui/qt_host.cpp
+        ui/vim_qt.cpp
         ui/widgets_window.cpp
         ui/widgets_theme.cpp
     )
     target_include_directories(rename_widgets PUBLIC "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(rename_widgets PUBLIC rename_core rename_ui rename_win)
+    target_link_libraries(rename_widgets PUBLIC rename_core rename_ui rename_win vimcore)
     target_link_libraries(rename_widgets PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets)
     if(WIN32)
         target_link_libraries(rename_widgets PUBLIC dwmapi)
@@ -181,6 +195,18 @@ if(RENAME_BUILD_QT)
     # main.cpp gains the window path; RENAME_HAVE_QT is what selects it there.
     target_link_libraries(rename PRIVATE rename_widgets)
     target_compile_definitions(rename PRIVATE RENAME_HAVE_QT)
+
+    # ---- vim adapter tests (Qt only) -----------------------------------------
+    # vimcore's own suite is portable and lives in the submodule; this target
+    # proves the Qt glue: key translation, offset mapping, insert-mode pass-through.
+    add_executable(vim_qt_tests tests/test_vim_qt.cpp)
+    target_link_libraries(vim_qt_tests PRIVATE rename_widgets Qt6::Core Qt6::Gui Qt6::Widgets)
+    set_target_properties(vim_qt_tests PROPERTIES AUTOMOC ON)
+    if(MSVC)
+        target_compile_options(vim_qt_tests PRIVATE /utf-8 /W4 /permissive-)
+        set_target_properties(vim_qt_tests PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
+    endif()
+    add_test(NAME vim_qt COMMAND vim_qt_tests)
 
     # ---- standalone window wrapper (local verification only) ----------------
     # Not shipped: plugin.json names rename.exe, and only one program may be

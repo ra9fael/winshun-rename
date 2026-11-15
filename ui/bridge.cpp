@@ -1118,6 +1118,62 @@ void Bridge::deletePreset(const QString& name)
     }
 }
 
+// ---- memory of per-user preferences ---------------------------------------------
+//
+// One small file, <dataDir>/settings.json. It is read once (lazily, so a bridge
+// with no data directory — tests, the grab hook — never touches the disk) and
+// written on every change. A missing or malformed file means "defaults", never
+// an error: a preference is not worth blocking a rename over.
+
+namespace {
+
+QString SettingsPath(const std::wstring& dataDir)
+{
+    return QDir::cleanPath(ToQt(dataDir) + QStringLiteral("/settings.json"));
+}
+
+} // namespace
+
+bool Bridge::vimEnabled() const
+{
+    if (!m_settingsLoaded)
+    {
+        m_settingsLoaded = true;
+        if (!m_dataDir.empty())
+        {
+            QFile file(SettingsPath(m_dataDir));
+            if (file.open(QIODevice::ReadOnly))
+            {
+                const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+                m_vimEnabled = root.value(QStringLiteral("vimMode")).toBool(false);
+            }
+        }
+    }
+    return m_vimEnabled;
+}
+
+void Bridge::setVimEnabled(bool enabled)
+{
+    if (vimEnabled() == enabled)
+        return;
+    m_vimEnabled = enabled;
+    if (!m_dataDir.empty())
+    {
+        const QString path = SettingsPath(m_dataDir);
+        QJsonObject root;
+        QFile existing(path);
+        if (existing.open(QIODevice::ReadOnly))
+            root = QJsonDocument::fromJson(existing.readAll()).object();
+        existing.close();
+        root.insert(QStringLiteral("vimMode"), enabled);
+        QDir().mkpath(ToQt(m_dataDir));
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    }
+    emit changed();
+}
+
 void Bridge::setSingleRule(int scope, int match, const QString& find,
                            const QString& replace, bool enabled)
 {
