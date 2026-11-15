@@ -128,6 +128,7 @@ public:
     bool allSelected() const;
     bool ruleRegexInvalid() const;
     QString doneLine() const { return m_doneLine; }
+    QString blockedLine() const { return m_blockedLine; }
     QString filter() const;
     PreviewModel* previewModel();
     QVariantMap look() const { return m_look; }

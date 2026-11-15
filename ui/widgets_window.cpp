@@ -787,7 +787,7 @@ void Window::RefreshEmptyState()
         return;
 
     const QString done = m_bridge->doneLine();
-    const QString blocked = m_bridge->blockingReason();
+    const QString blocked = m_bridge->blockedLine();
     if (!done.isEmpty())
     {
         m_empty->setText(done + QLatin1Char('\n')
@@ -818,10 +818,11 @@ void Window::RefreshFooter()
     const int unchanged = m_bridge->unchangedCount();
 
     const QString blocking = m_bridge->blockingReason();
+    const bool blocked = !m_bridge->blockedLine().isEmpty();
     QColor dot = m_theme->faint;
     if (!done.isEmpty())
         dot = m_theme->ok;
-    else if (!blocking.isEmpty() || errors > 0)
+    else if (blocked || errors > 0)
         dot = m_theme->caution;
     else if (ready > 0)
         dot = m_theme->ok;
@@ -924,6 +925,9 @@ void Window::ConfirmAndApply()
 
 bool Window::Ask(const QString& text, const QString& acceptText)
 {
+    if (m_asking)
+        return false;
+    m_asking = true;
     QMessageBox box(QMessageBox::Question, T("重命名", "Rename"), text,
                     QMessageBox::NoButton, this);
     box.setIcon(QMessageBox::Question);
@@ -933,6 +937,7 @@ bool Window::Ask(const QString& text, const QString& acceptText)
     QAbstractButton* cancel = box.addButton(T("取消", "Cancel"), QMessageBox::RejectRole);
     box.setDefaultButton(qobject_cast<QPushButton*>(cancel));
     box.exec();
+    m_asking = false;
     return box.clickedButton() == accept;
 }
 

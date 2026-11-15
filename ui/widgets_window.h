@@ -104,6 +104,7 @@ private:
     QTimer* m_textTimer = nullptr;
 
     bool m_syncing = false;
+    bool m_asking = false;
 };
 
 } // namespace rename_widgets

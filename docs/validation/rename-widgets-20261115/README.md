@@ -42,17 +42,21 @@ same Widgets target used by the plugin.
 
 ## Screenshots
 
-| Rule mode | Text mode |
+| Empty window (instructions, not an error) | Rule mode |
 |---|---|
-| ![rule](rule.png) | ![text](text.png) |
+| ![empty](empty.png) | ![rule](rule.png) |
 
-| Folder contents | Filter: to rename |
+| Text mode | Filter: to rename |
 |---|---|
-| ![folder](folder.png) | ![filter](filter.png) |
+| ![text](text.png) | ![filter](filter.png) |
 
-| Missing path (blocked, not "no files") | Files trigger under the host Qt environment |
+| Folder contents | Missing path (blocked, not "no files") |
 |---|---|
-| ![missing](missing.png) | ![trigger](host-files-trigger.png) |
+| ![folder](folder.png) | ![missing](missing.png) |
+
+| Files trigger under the host Qt environment |
+|---|
+| ![trigger](host-files-trigger.png) |
 
 ## Files trigger
 
@@ -70,7 +74,9 @@ It answered `{"effects":[{"type":"hide"}]}`, the plugin logged
 
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
-Widgets added to the shared-Qt contract).
+Widgets added to the shared-Qt contract). The final experimental package is
+`dist/ra9fael.rename-0.1.0.wsplugin` (3,294,591 bytes, SHA-256
+`e2602764b4088df713bbc7755a8025ebdf78a44665cf223566266234bdb418ad`).
 
 ## Memory (this machine)
 

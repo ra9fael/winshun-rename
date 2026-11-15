@@ -380,6 +380,17 @@ void Bridge::setSelection(const QStringList& paths, bool recursive)
     m_folder.clear();
     m_collected.clear();
 
+    // The wrapper opens an empty window to show the empty state. An empty
+    // selection is not an enumeration error.
+    if (paths.isEmpty())
+    {
+        m_presenter.SetItems({});
+        PublishRows();
+        emit changed();
+        emit countsChanged();
+        return;
+    }
+
     rename_win::EnumerateRequest request;
     request.recursive = recursive;
     for (const QString& path : paths)
