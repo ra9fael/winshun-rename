@@ -121,10 +121,10 @@ crash did not recur with the font/symbol fix and `memoryMB: 256`.
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
 Widgets added to the shared-Qt contract). The installed experimental package is
-`dist/ra9fael.rename-0.4.0.wsplugin` (3,351,698 bytes, SHA-256
-`3aa5cab2afa4db5be888b71250f7f78ee2317ada7406e6d8939ca53afc6cd55a`).
+`dist/ra9fael.rename-0.4.1.wsplugin` (3,352,112 bytes, SHA-256
+`161798728ddd272d09ba2f798cd8ba1f4f5afe41f49f89ab7732305a86e4f64d`).
 
-## Vim mode (0.4.0)
+## Vim mode (0.4.0, fixes in 0.4.1)
 
 The text page has a `Vim` chip and a mode badge. Vim keys come from
 [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore), a portable
@@ -141,7 +141,16 @@ Design points worth knowing:
 - **Insert mode is native.** Only Esc is intercepted there, so IME (Chinese
   input), clipboard, drag-and-drop and platform editing behave exactly as
   before. Intercepting composition events would have been the easy way to break
-  typing.
+  typing. Native text changes sync the existing core (`refreshFromDocument`,
+  vimcore 0.1.1), so a Normal command after Esc edits the text the user
+  actually sees, and one insert session is still one undo step.
+- **Esc belongs to the focused widget.** 0.4.0 shipped a window-wide Esc
+  `QShortcut`, which Qt matches *before* key delivery — it closed the window
+  even in vim mode. 0.4.1 removed it; `keyPressEvent` closes only when the
+  vim-enabled text editor does not own the key. A second 0.4.0 bug fixed
+  here: re-applying the (unchanged) vim setting on every Bridge refresh
+  rebuilt the core, so the first typed character dropped out of Insert.
+  `setEnabled()` is now idempotent, guarded by `vim_window` tests.
 - **Window chords keep working**: Ctrl+S runs the batch, Ctrl+Z/Ctrl+Y stay the
   host undo, Alt/F-keys pass through. Ctrl+R is the one Ctrl chord the editor
   takes (vim redo).
@@ -155,12 +164,14 @@ Verification:
 
 | Check | Result |
 |---|---|
-| `vendor/vimcore` tests | 49/49 pass (portable, no Qt) |
+| `vendor/vimcore` tests | 57/57 pass (portable, no Qt) |
 | `vim_qt` adapter tests | 14/14 pass — real QKeyEvents against a `QPlainTextEdit` (offscreen) |
-| `rename` suite | 5/5 ctest targets pass (`vim_qt`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`) |
+| `vim_window` tests | 8/8 pass — Esc ownership, insert mode survives buffer sync, native typing followed by Normal edits |
+| `rename` suite | 6/6 ctest targets pass (`vim_window`, `vim_qt`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`) |
 | Installed 0.4.0, text mode + Vim on | 45.4 MB working set / 8.4 MB private |
+| Installed 0.4.1, text mode + Vim on | 41.5 MB working set / 7.6 MB private (`vim-installed-041.png`) |
 | Settings round-trip | run 1 wrote `{"vimMode":true}`; run 2 without the grab hook still showed `-- NORMAL --` |
-| Submodule | `git submodule add https://github.com/ra9fael/winshun-vimcore vendor/vimcore`, pinned to `1073ec8` |
+| Submodule | `git submodule add https://github.com/ra9fael/winshun-vimcore vendor/vimcore`, pinned to `8280084` |
 
 ## Rule chain (0.3.0)
 
@@ -198,6 +209,7 @@ colour.
 | Widgets under host Qt, files trigger | 42 MB | 7.6 MB | installed 0.2.3, single file → parent folder |
 | Widgets, rule chain + 4 items, chain of 2 rules | 45 MB | 8.6 MB | dev build, `RENAME_GRAB_RULE` |
 | Widgets, installed 0.4.0, text mode + Vim on | 45.4 MB | 8.4 MB | vimcore adds no measurable cost |
+| Widgets, installed 0.4.1, text mode + Vim on | 41.5 MB | 7.6 MB | after Esc/insert-mode fixes |
 
 ### Why the first Widgets number was wrong
 
