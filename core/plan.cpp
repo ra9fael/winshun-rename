@@ -122,9 +122,15 @@ PreviewPlan BuildControlPlan(const std::vector<ItemSnapshot>& items,
         }
     }
 
-    // Pass 2: a target equals some row's current name, and that row is not
-    // moving away. PowerRename would auto-rename here; we refuse (RN-FR-05,
-    // RN-T6-01).
+    // Pass 2: a target equals some row's current name.
+    //
+    // Two cases, and they are not the same thing:
+    //   * the other row is staying put — its name is not being freed, so this row
+    //     can never run: refused (RN-FR-05, RN-T6-01). PowerRename would
+    //     auto-suffix here; we refuse.
+    //   * the other row is itself moving away — its name *will* be free, but only
+    //     after that row runs. Record the dependency so the executor can order the
+    //     batch instead of failing on a target that is still occupied.
     for (std::size_t i = 0; i < count; ++i)
     {
         if (!readyBefore[i] || blocked[i])
@@ -133,22 +139,57 @@ PreviewPlan BuildControlPlan(const std::vector<ItemSnapshot>& items,
         {
             if (i == j)
                 continue;
-            // Only a staying-put row can be collided with: a row that is itself
-            // renaming frees its old name in the same batch.
-            if (readyBefore[j])
+            if (!NfcEqual(plan.items[i].targetLeaf, plan.items[j].originalLeaf))
                 continue;
-            if (NfcEqual(plan.items[i].targetLeaf, plan.items[j].originalLeaf))
+            if (!readyBefore[j])
+            {
+                blocked[i] = true;   // nobody frees that name in this batch
+                break;
+            }
+            plan.items[i].waitsForId = plan.items[j].id;
+            break;
+        }
+    }
+
+    // Pass 3: a dependency cycle cannot be ordered, so no order works. A 1-cycle
+    // is a row that wants its own name — that is "unchanged", handled above; the
+    // interesting case is A waits for B and B waits for A (swapping two names
+    // with no temporary). Refuse both rather than let the executor discover it.
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (!readyBefore[i] || blocked[i] || plan.items[i].waitsForId.empty())
+            continue;
+        // Walk the chain; a repeat means a cycle.
+        std::string here = plan.items[i].waitsForId;
+        for (std::size_t step = 0; step <= count && !here.empty(); ++step)
+        {
+            if (here == plan.items[i].id)
             {
                 blocked[i] = true;
                 break;
             }
+            std::size_t next = count;
+            for (std::size_t k = 0; k < count; ++k)
+            {
+                if (plan.items[k].id == here)
+                {
+                    next = k;
+                    break;
+                }
+            }
+            if (next == count)
+                break;
+            here = plan.items[next].waitsForId;
         }
     }
 
     for (std::size_t i = 0; i < count; ++i)
     {
         if (blocked[i])
+        {
             plan.items[i].status = Status::ErrorAlreadyExists;
+            plan.items[i].waitsForId.clear();
+        }
     }
 
     return plan;

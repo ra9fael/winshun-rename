@@ -299,19 +299,81 @@ std::vector<Row> Presenter::ExecutionOrder() const
     // Deepest first, then by id so the order is deterministic for tests. Built
     // from the plan rather than from visible rows: a filter must never shrink the
     // batch (RN-FR-10).
-    std::vector<Row> out;
+    //
+    // Two constraints have to hold at once:
+    //   * a child before its parent, or the parent's rename invalidates the
+    //     child's path;
+    //   * a row that frees a name before the row that takes it, or the executor
+    //     finds the target occupied (the plan records that in waitsForId).
+    // A row waiting for another must come after it; depth is the tie-break. The
+    // plan already refused cycles, so this terminates.
+    std::vector<Row> candidates;
     for (const Row& row : m_rows)
     {
         if (!row.selected || row.status != rename_core::Status::Ready)
             continue;
-        out.push_back(row);
+        candidates.push_back(row);
     }
 
-    std::stable_sort(out.begin(), out.end(), [](const Row& a, const Row& b) {
-        if (a.depth != b.depth)
-            return a.depth > b.depth;
-        return a.id < b.id;
-    });
+    // waitsForId lives in the plan, which is the same id space as the rows.
+    auto waitsFor = [this](const std::string& id) -> std::string {
+        for (const rename_core::PlanItem& item : m_plan.items)
+        {
+            if (item.id == id)
+                return item.waitsForId;
+        }
+        return std::string();
+    };
+
+    std::vector<Row> out;
+    std::vector<bool> taken(candidates.size(), false);
+    std::size_t emitted = 0;
+    while (emitted < candidates.size())
+    {
+        // Pick the deepest candidate whose dependency is already emitted (or has
+        // no dependency at all, or whose dependency is not in this batch).
+        std::size_t pick = candidates.size();
+        for (std::size_t i = 0; i < candidates.size(); ++i)
+        {
+            if (taken[i])
+                continue;
+
+            const std::string wait = waitsFor(candidates[i].id);
+            bool ready = true;
+            if (!wait.empty())
+            {
+                bool inBatch = false;
+                bool emittedYet = false;
+                for (std::size_t k = 0; k < candidates.size(); ++k)
+                {
+                    if (candidates[k].id != wait)
+                        continue;
+                    inBatch = true;
+                    emittedYet = taken[k];
+                    break;
+                }
+                ready = !inBatch || emittedYet;
+            }
+            if (!ready)
+                continue;
+
+            if (pick == candidates.size())
+            {
+                pick = i;
+                continue;
+            }
+            if (candidates[i].depth > candidates[pick].depth
+                || (candidates[i].depth == candidates[pick].depth
+                    && candidates[i].id < candidates[pick].id))
+                pick = i;
+        }
+        if (pick == candidates.size())
+            break;   // cannot happen with a cycle-free plan; stop rather than spin
+        taken[pick] = true;
+        out.push_back(candidates[pick]);
+        ++emitted;
+    }
+
     return out;
 }
 

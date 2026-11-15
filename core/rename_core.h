@@ -333,6 +333,10 @@ struct PlanItem {
     unsigned depth = 0;
     bool trimmed = false;
     bool hadNbsp = false;
+    // Set when this row's target is the *current* name of another row that is
+    // also moving: the batch must run that row first, or the executor finds the
+    // target occupied and refuses. `after` is that row's id.
+    std::string waitsForId;
 };
 
 struct PreviewPlan {

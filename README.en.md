@@ -1,6 +1,20 @@
 # Rename (Proposal)
 
-**Status: implemented and tested (L1/L2), host not yet verified.** Design and requirements: [plugin-design.en.md](plugin-design.en.md). Implementation and validation records: `WinShun/docs/validation/rename-m0-20261110/` (core and executor) and `WinShun/docs/validation/rename-qt-20261110/` (Qt window and theme following). Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md).
+**Status: core and window verified locally (S1–S9); the host is not verified.** Local verification spec: [TEST-SPEC.en.md](TEST-SPEC.en.md). This round's measurements: [docs/validation/rename-local-20261113/README.en.md](docs/validation/rename-local-20261113/README.en.md). Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md).
+
+## Trying it locally (no host)
+
+`rename-ui.exe` is a standalone window wrapper for verifying the interface and the logic without Win顺. It links the same code the plugin's window uses.
+
+```
+rename-ui.exe --dir <folder> [--recursive]      # the folder's direct children become the set
+rename-ui.exe --files <path> [<path>...]        # these files
+rename-ui.exe                                   # empty window
+```
+
+Qt is needed at run time: put `C:\Program Files\WinShun` on `PATH` and point `QT_PLUGIN_PATH`, `QT_QPA_PLATFORM_PLUGIN_PATH` and `QML_IMPORT_PATH` at the same folder — exactly what the host runner does.
+
+Diagnostic hooks (verification only): `RENAME_GRAB_WINDOW=<png>` renders the window and exits; `RENAME_GRAB_RULE=<find>\n<replace>`, `RENAME_GRAB_MODE=text` and `RENAME_GRAB_APPLY=1` preset a rule, switch to text mode, or run the batch before the grab.
 
 ## Existing baseline
 
@@ -51,5 +65,6 @@ Execution design explicitly handles cancellation, name swaps, parent/child direc
 - [Design and 11-section requirements](plugin-design.en.md): facts (with per-item sources for both references), dual-mode architecture, requirement IDs, permissions, failure matrix, honest notes.
 - [UI specification](UI-SPEC.en.md): one ASCII wireframe per mode, layout, fields, keyboard shortcuts, error states, theme/scaling, and accessibility.
 - [Test plan](TEST-PLAN.en.md): row-level ID, FR, L0-L5, preconditions, steps, expected result, evidence, and unexecuted status, plus a "behavioural differences from the references" regression list.
+- [Local verification spec](TEST-SPEC.en.md): what must be verified locally (S1–S9) before the host is involved, including the directory input set and the single-file path. Written before the implementation.
 
-All features, compatibility, and performance are goals pending approval and validation. There is no implementation or test-pass claim at present.
+The core, the platform edge and the window pass locally (`ctest` 3/3, `rename_e2e` 36/36, six S9 renders). Host integration, real-hardware behaviour and release remain unverified goals.

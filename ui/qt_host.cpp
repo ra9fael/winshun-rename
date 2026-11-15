@@ -7,10 +7,14 @@
 
 #include "ui/bridge.h"
 #include "win/platform.h"
-#include "winshun.h"
 
+#include <QByteArray>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QJsonValue>
 #include <QMetaObject>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -39,12 +43,6 @@ struct Ui
     rename_qml::Bridge* bridge = nullptr;
     QObject* theme = nullptr;
     QQuickWindow* window = nullptr;
-
-    // The selection that arrived before the window existed, so a fast host that
-    // sends `files` before the scene is up still gets its rows.
-    bool hasPendingSelection = false;
-    std::vector<std::wstring> pendingPaths;
-    bool pendingRecursive = false;
 };
 
 std::unique_ptr<Ui>& Instance()
@@ -58,26 +56,80 @@ QString ToQt(const std::wstring& text) { return QString::fromStdWString(text); }
 // `nativeLook` as the host sent it, into the QVariantMap QML reads. Only scalars
 // are taken: the contract says colours are "#AARRGGBB" strings and radii are
 // numbers, and an unknown key is ignored by QML anyway (docs/plugins.md).
+//
+// Parsed with Qt's own JSON reader rather than the plugin SDK's, so this whole
+// layer has no dependency on winshun.h: the standalone window wrapper
+// (rename-ui.exe) links exactly the same code as the plugin's window path.
 QVariantMap ParseLook(const std::string& json)
 {
     QVariantMap map;
     if (json.empty())
         return map;
 
-    const auto parsed = winshun::Json::parse(json);
-    if (!parsed || !parsed->isObject())
+    QJsonParseError problem{};
+    const QJsonDocument document = QJsonDocument::fromJson(QByteArray::fromStdString(json), &problem);
+    if (problem.error != QJsonParseError::NoError || !document.isObject())
         return map;
 
-    for (const auto& [key, value] : parsed->toObject())
+    const QJsonObject object = document.object();
+    for (auto it = object.begin(); it != object.end(); ++it)
     {
-        if (value.isString())
-            map.insert(QString::fromStdString(key), QString::fromStdString(value.toString()));
-        else if (value.isBool())
-            map.insert(QString::fromStdString(key), value.toBool(false));
-        else if (value.isNumber())
-            map.insert(QString::fromStdString(key), value.toNumber());
+        switch (it.value().type())
+        {
+        case QJsonValue::String:
+            map.insert(it.key(), it.value().toString());
+            break;
+        case QJsonValue::Bool:
+            map.insert(it.key(), it.value().toBool());
+            break;
+        case QJsonValue::Double:
+            map.insert(it.key(), it.value().toDouble());
+            break;
+        default:
+            break;   // an object or array token is not a token; ignore it
+        }
     }
     return map;
+}
+
+// RENAME_GRAB_WINDOW=<path>: render the finished window to a PNG and exit.
+// A diagnostic hook, not a feature: it is the only way to check the look on a
+// machine whose screen cannot be captured (a disconnected session, CI), and it
+// goes through the same render path the user sees because
+// QQuickWindow::grabWindow() asks the scene graph for its content.
+//
+// RENAME_GRAB_RULE=<find>\n<replace>: applied as the single rule first, so the
+// grab shows a real preview rather than an untouched table.
+// RENAME_GRAB_MODE=text: switch to the oil buffer first.
+// RENAME_GRAB_APPLY=1: run the batch before grabbing, so a grab proves the whole
+// chain (preview -> execute -> refreshed table) on a real directory.
+//
+// Returns true when a grab was scheduled; the caller then leaves the window up.
+bool GrabIfAsked(Ui* ui)
+{
+    const QString grabTo = qEnvironmentVariable("RENAME_GRAB_WINDOW");
+    if (grabTo.isEmpty() || !ui || !ui->window || !ui->bridge)
+        return false;
+
+    if (qEnvironmentVariable("RENAME_GRAB_MODE") == QLatin1String("text"))
+        ui->bridge->switchMode(QStringLiteral("text"));
+    const QStringList rule = qEnvironmentVariable("RENAME_GRAB_RULE").split(QLatin1Char('\n'));
+    if (rule.size() == 2)
+        ui->bridge->setSingleRule(0, 0, rule[0], rule[1], true);
+    if (qEnvironmentVariable("RENAME_GRAB_APPLY") == QLatin1String("1"))
+        ui->bridge->apply();
+
+    QTimer::singleShot(1200, ui->window, [window = ui->window, grabTo] {
+        // grabWindow() must run on the GUI thread, which is where this fires.
+        const QImage image = window->grabWindow();
+        const bool saved = image.save(grabTo, "PNG");
+        std::fprintf(stderr, "[rename] grab %s: %s (%dx%d)\n",
+                     saved ? "written" : "FAILED",
+                     grabTo.toUtf8().constData(), image.width(), image.height());
+        std::fflush(stderr);
+        QCoreApplication::quit();
+    });
+    return true;
 }
 
 void ShowNow(const std::vector<std::wstring>& paths, bool recursive)
@@ -95,37 +147,7 @@ void ShowNow(const std::vector<std::wstring>& paths, bool recursive)
     ui->window->show();
     ui->window->raise();
     ui->window->requestActivate();
-
-    // RENAME_GRAB_WINDOW=<path>: render the finished window to a PNG and exit.
-    // A diagnostic hook, not a feature: it is the only way to check the look on
-    // a machine whose screen cannot be captured (a disconnected session, CI),
-    // and it goes through the same render path the user sees because
-    // QQuickWindow::grabWindow() asks the scene graph for its content.
-    // RENAME_GRAB_RULE=<find>\n<replace>: applied as the single rule first, so
-    // the grab shows a real preview rather than an untouched table.
-    // RENAME_GRAB_MODE=text: switch to the oil buffer first.
-    // RENAME_GRAB_APPLY=1: run the batch before grabbing, so a grab proves the
-    // whole chain (preview -> execute -> refreshed table) on a real directory.
-    const QString grabTo = qEnvironmentVariable("RENAME_GRAB_WINDOW");
-    if (grabTo.isEmpty())
-        return;
-    if (qEnvironmentVariable("RENAME_GRAB_MODE") == QLatin1String("text"))
-        ui->bridge->switchMode(QStringLiteral("text"));
-    const QStringList rule = qEnvironmentVariable("RENAME_GRAB_RULE").split(QLatin1Char('\n'));
-    if (rule.size() == 2)
-        ui->bridge->setSingleRule(0, 0, rule[0], rule[1], true);
-    if (qEnvironmentVariable("RENAME_GRAB_APPLY") == QLatin1String("1"))
-        ui->bridge->apply();
-    QTimer::singleShot(1200, ui->window, [window = ui->window, grabTo] {
-        // grabWindow() must run on the GUI thread, which is where this fires.
-        const QImage image = window->grabWindow();
-        const bool saved = image.save(grabTo, "PNG");
-        std::fprintf(stderr, "[rename] grab %s: %s (%dx%d)\n",
-                     saved ? "written" : "FAILED",
-                     grabTo.toUtf8().constData(), image.width(), image.height());
-        std::fflush(stderr);
-        QCoreApplication::quit();
-    });
+    GrabIfAsked(ui);
 }
 
 void ApplyLookNow(const std::string& locale, bool dark, const std::string& uiSize,
@@ -140,10 +162,16 @@ void ApplyLookNow(const std::string& locale, bool dark, const std::string& uiSiz
 
 } // namespace
 
-bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& error)
+bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& /*error*/)
 {
     auto ui = std::make_unique<Ui>();
 
+    // Only the application object here. The QML engine and the scene are built
+    // on the first Show(): loading them costs about 1.5 s on this machine, and
+    // the host answers initialize within timeoutMs (1.5 s in the manifest), so
+    // anything heavier than this would make the host kill the plugin before it
+    // ever answered. A plugin that is never opened then pays for one process
+    // with a Qt app object and nothing else.
     ui->app = new QGuiApplication(argc, argv);
     ui->app->setApplicationName(QStringLiteral("Rename"));
     // The host's own behaviour: closing the window must not end the process, and
@@ -163,6 +191,21 @@ bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& erro
     if (!dataDir.empty())
         ui->bridge->SetDataDir(dataDir);
 
+    Instance() = std::move(ui);
+    return true;
+}
+
+namespace {
+
+// Builds the QML engine, the theme and the scene. Called on the GUI thread the
+// first time the window is asked for; a failure is reported through `error` and
+// leaves the plugin answering the protocol without a window.
+bool BuildScene(std::string& error)
+{
+    Ui* ui = Instance().get();
+    if (!ui || ui->window)
+        return ui && ui->window;
+
     // Parented to the bridge so the engine dies with it, after app.exec().
     ui->engine = new QQmlEngine(ui->bridge);
 
@@ -177,14 +220,12 @@ bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& erro
     if (themeComponent.isError())
     {
         error = themeComponent.errorString().toStdString();
-        delete ui->bridge;
         return false;
     }
     ui->theme = themeComponent.create();
     if (!ui->theme)
     {
         error = themeComponent.errorString().toStdString();
-        delete ui->bridge;
         return false;
     }
     ui->theme->setParent(ui->bridge);
@@ -197,14 +238,12 @@ bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& erro
     if (component.isError())
     {
         error = component.errorString().toStdString();
-        delete ui->bridge;
         return false;
     }
     QObject* object = component.create(context);
     if (!object)
     {
         error = component.errorString().toStdString();
-        delete ui->bridge;
         return false;
     }
     // The context goes with the scene: deleting the window frees both.
@@ -215,7 +254,7 @@ bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& erro
     {
         error = "the root QML object is not a Window";
         delete object;
-        delete ui->bridge;
+        ui->window = nullptr;
         return false;
     }
 
@@ -226,10 +265,14 @@ bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& erro
                          theme->setProperty("look", bridge->look());
                          theme->setProperty("uiSize", bridge->uiSize());
                      });
-
-    Instance() = std::move(ui);
+    // The look that arrived while no scene existed: the theme object reads it
+    // now, before the first frame.
+    ui->theme->setProperty("look", ui->bridge->look());
+    ui->theme->setProperty("uiSize", ui->bridge->uiSize());
     return true;
 }
+
+} // namespace
 
 void Show(const std::vector<std::wstring>& paths, bool recursive)
 {
@@ -239,16 +282,57 @@ void Show(const std::vector<std::wstring>& paths, bool recursive)
 
     if (!ui->window)
     {
-        // Queued on the GUI thread: Start() has run by the time the event loop
-        // turns, so the scene is there. Until then the selection is kept.
-        ui->hasPendingSelection = true;
-        ui->pendingPaths = paths;
-        ui->pendingRecursive = recursive;
+        // First open: build the scene now, on the GUI thread (this lambda runs
+        // there). A scene failure is logged and the selection is dropped rather
+        // than kept for a window that will never come.
+        QMetaObject::invokeMethod(ui->bridge, [paths, recursive] {
+            std::string error;
+            if (!BuildScene(error))
+            {
+                std::fprintf(stderr, "[rename] window failed to load: %s\n", error.c_str());
+                std::fflush(stderr);
+                return;
+            }
+            ShowNow(paths, recursive);
+        }, Qt::QueuedConnection);
         return;
     }
     QMetaObject::invokeMethod(ui->bridge,
                               [paths, recursive] { ShowNow(paths, recursive); },
                               Qt::QueuedConnection);
+}
+
+void ShowFolder(const std::wstring& folder, bool recursive)
+{
+    Ui* ui = Instance().get();
+    if (!ui || !ui->bridge)
+        return;
+
+    const QString path = ToQt(folder);
+    // Same lazy scene build as Show(); the only difference is which bridge call
+    // turns the path into rows.
+    QMetaObject::invokeMethod(ui->bridge, [path, recursive] {
+        Ui* current = Instance().get();
+        if (!current || !current->bridge)
+            return;
+        if (!current->window)
+        {
+            std::string error;
+            if (!BuildScene(error))
+            {
+                std::fprintf(stderr, "[rename] window failed to load: %s\n", error.c_str());
+                std::fflush(stderr);
+                return;
+            }
+        }
+        if (!current->window)
+            return;
+        current->bridge->setFolder(path, recursive);
+        current->window->show();
+        current->window->raise();
+        current->window->requestActivate();
+        GrabIfAsked(current);
+    }, Qt::QueuedConnection);
 }
 
 void ApplyLook(const std::string& locale, bool dark, const std::string& uiSize,

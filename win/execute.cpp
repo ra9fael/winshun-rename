@@ -122,6 +122,14 @@ bool TargetFree(const std::wstring& target)
     return attributes == INVALID_FILE_ATTRIBUTES;
 }
 
+// Two full paths naming the same file, compared the way Windows compares names:
+// case-insensitively. Used only to tell "this target is another item's current
+// name" apart from "this target is occupied by something outside the batch".
+bool NfcEqualsPath(const std::wstring& a, const std::wstring& b)
+{
+    return ::_wcsicmp(a.c_str(), b.c_str()) == 0;
+}
+
 // Write the read-only batch record. Deliberately not a recovery journal: it
 // exists so a user (or a bug report) can see exactly what the batch intended and
 // what happened, not so the plugin can roll anything back.
@@ -175,6 +183,135 @@ std::wstring WriteJournal(const std::vector<ExecuteResultItem>& items, const std
     return path;
 }
 
+// Submit one round through the Shell and wait for it to finish. Kept separate
+// from planning so a round is only planned against a filesystem where every
+// earlier round has already landed — that ordering is what makes
+// "A → B, B → C" work without a temporary name.
+std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>& accepted,
+                                                  std::vector<ExecuteResultItem>& rejected,
+                                                  bool& undoAvailable)
+{
+    std::vector<ExecuteResultItem> renamed;
+
+    // The Shell owns rename, elevation and undo. FOFX_SHOWELEVATIONPROMPT lets it
+    // ask for rights rather than failing with a bare access-denied, and
+    // FOFX_ADDUNDORECORD is what makes Ctrl+Z work afterwards.
+    //
+    // FOF_RENAMEONCOLLISION is deliberately absent (RN-T6-01). The FOF_*/FOFX_*
+    // symbols live in shobjidl_core.h, which WIN32_LEAN_AND_MEAN excludes, so the
+    // documented values are spelled out here
+    // (IFileOperation::SetOperationFlags, shellapi.h / shobjidl_core.h).
+    constexpr DWORD kFofAllowUndo = 0x0040;
+    constexpr DWORD kFofxAddUndoRecord = 0x2000000;
+    constexpr DWORD kFofxShowElevationPrompt = 0x400000;
+    const DWORD operationFlags = kFofAllowUndo | kFofxAddUndoRecord | kFofxShowElevationPrompt;
+
+    ComPtr<IFileOperation> fileOperation;
+    HRESULT hr = ::CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(&fileOperation));
+    if (SUCCEEDED(hr))
+        hr = fileOperation->SetOperationFlags(operationFlags);
+
+    if (FAILED(hr))
+    {
+        for (const ExecuteItem& item : accepted)
+        {
+            ExecuteResultItem report;
+            report.originalPath = item.fullPath;
+            report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
+            report.outcome = ExecuteOutcome::Failed;
+            report.detail = L"无法创建 Shell 改名操作";
+            rejected.push_back(std::move(report));
+        }
+        return renamed;
+    }
+
+    // Build a Shell item per accepted file. A failure to bind one item is reported
+    // for that item only.
+    std::vector<ComPtr<IShellItem>> shellItems;
+    std::vector<std::size_t> shellItemToAccepted;
+    std::vector<IdentitySnapshot> beforeByAccepted(accepted.size());
+    std::vector<bool> queued(accepted.size(), false);
+
+    for (std::size_t i = 0; i < accepted.size(); ++i)
+    {
+        beforeByAccepted[i] = ReadIdentity(accepted[i].fullPath);
+
+        ComPtr<IShellItem> shellItem;
+        if (FAILED(::SHCreateItemFromParsingName(accepted[i].fullPath.c_str(), nullptr,
+                                                 IID_PPV_ARGS(&shellItem))))
+        {
+            ExecuteResultItem report;
+            report.originalPath = accepted[i].fullPath;
+            report.targetPath = JoinPath(DirectoryOf(accepted[i].fullPath),
+                                         accepted[i].targetLeaf);
+            report.outcome = ExecuteOutcome::Failed;
+            report.detail = L"Shell 无法解析该路径";
+            rejected.push_back(std::move(report));
+            continue;
+        }
+
+        if (FAILED(fileOperation->RenameItem(shellItem.Get(), accepted[i].targetLeaf.c_str(),
+                                            nullptr)))
+        {
+            ExecuteResultItem report;
+            report.originalPath = accepted[i].fullPath;
+            report.targetPath = JoinPath(DirectoryOf(accepted[i].fullPath),
+                                         accepted[i].targetLeaf);
+            report.outcome = ExecuteOutcome::Failed;
+            report.detail = L"Shell 拒绝了改名请求";
+            rejected.push_back(std::move(report));
+            continue;
+        }
+
+        shellItems.push_back(std::move(shellItem));
+        shellItemToAccepted.push_back(i);
+        queued[i] = true;
+    }
+
+    if (shellItems.empty())
+        return renamed;
+
+    hr = fileOperation->PerformOperations();
+
+    BOOL aborted = FALSE;
+    fileOperation->GetAnyOperationsAborted(&aborted);
+
+    for (const std::size_t index : shellItemToAccepted)
+    {
+        const ExecuteItem& item = accepted[index];
+
+        ExecuteResultItem report;
+        report.originalPath = item.fullPath;
+        report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
+
+        if (FAILED(hr))
+        {
+            report.outcome = aborted ? ExecuteOutcome::Refused : ExecuteOutcome::Failed;
+            report.detail = aborted ? L"已取消" : L"Shell 操作未完成";
+            rejected.push_back(std::move(report));
+            continue;
+        }
+
+        // Identity is re-checked per item: a file rewritten between planning and
+        // submission must not be renamed on the strength of stale metadata. The
+        // Shell already renamed it, so this is a warning attached to the record,
+        // not a refusal.
+        const IdentitySnapshot after = ReadIdentity(report.targetPath);
+        if (beforeByAccepted[index].valid && after.valid &&
+            !SameIdentity(beforeByAccepted[index], after))
+        {
+            report.detail = L"改名成功，但文件身份与预览时不一致";
+        }
+
+        report.outcome = ExecuteOutcome::Renamed;
+        renamed.push_back(std::move(report));
+    }
+
+    undoAvailable = undoAvailable || SUCCEEDED(hr);
+    return renamed;
+}
+
 } // namespace
 
 ExecuteResult Execute(const std::vector<ExecuteItem>& items, const std::wstring& dataDir)
@@ -191,149 +328,107 @@ ExecuteResult Execute(const std::vector<ExecuteItem>& items, const std::wstring&
     std::stable_sort(ordered.begin(), ordered.end(),
                      [](const ExecuteItem& a, const ExecuteItem& b) { return a.depth > b.depth; });
 
-    // Per-item pre-flight: identity, target availability, and the target's own
-    // parent still existing. Anything failing here is reported and excluded from
-    // the Shell operation rather than aborting the whole batch silently.
-    std::vector<ExecuteItem> accepted;
+    // Staged submission. A target that is another item's *current* name is not an
+    // error: that name is freed by the same batch. But it is only free once the
+    // item holding it has actually run, so the batch runs in rounds — each round
+    // goes to the Shell and completes before the next is planned:
+    //   round 1: everything whose target is free right now
+    //   round N: everything whose blocker renamed in an earlier round
+    // Anything still blocked after all rounds is reported, never looped on.
+    //
+    // Without this, the one-pass pre-flight would see "2026报告.pdf" sitting there
+    // (its holder has not run yet) and refuse the item that legitimately wants
+    // that name.
+    std::vector<ExecuteItem> remaining = ordered;
     std::vector<ExecuteResultItem> rejected;
 
-    for (const ExecuteItem& item : ordered)
+    bool undoAvailable = false;
+
+    for (std::size_t round = 0; round <= ordered.size() && !remaining.empty(); ++round)
+    {
+        // ---- plan this round: who can run now -----------------------------
+        std::vector<ExecuteItem> deferred;
+        std::vector<ExecuteItem> accepted;
+        bool progressed = false;
+
+        for (const ExecuteItem& item : remaining)
+        {
+            ExecuteResultItem report;
+            report.originalPath = item.fullPath;
+            report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
+
+            const IdentitySnapshot before = ReadIdentity(item.fullPath);
+            if (!before.valid)
+            {
+                report.outcome = ExecuteOutcome::IdentityChanged;
+                report.detail = L"无法读取文件身份（可能已被移动或删除）";
+                rejected.push_back(std::move(report));
+                continue;
+            }
+
+            if (!TargetFree(report.targetPath))
+            {
+                // The target exists. If another item still waiting names it as its
+                // own source, that item frees it by running — defer to a later
+                // round instead of refusing. Otherwise: refuse, and never
+                // overwrite or auto-suffix (RN-FR-05, RN-T6-01).
+                bool freedByBatch = false;
+                for (const ExecuteItem& other : remaining)
+                {
+                    if (&other == &item)
+                        continue;
+                    if (NfcEqualsPath(other.fullPath, report.targetPath))
+                    {
+                        freedByBatch = true;
+                        break;
+                    }
+                }
+                if (freedByBatch)
+                {
+                    deferred.push_back(item);
+                    continue;
+                }
+                report.outcome = ExecuteOutcome::Refused;
+                report.detail = L"目标已存在";
+                rejected.push_back(std::move(report));
+                continue;
+            }
+
+            accepted.push_back(item);
+            progressed = true;
+        }
+
+        remaining = std::move(deferred);
+
+        // ---- submit this round, then look again ---------------------------
+        std::vector<ExecuteResultItem> roundResults;
+        if (!accepted.empty())
+            roundResults = SubmitThroughShell(accepted, rejected, undoAvailable);
+
+        result.items.insert(result.items.end(),
+                            std::make_move_iterator(roundResults.begin()),
+                            std::make_move_iterator(roundResults.end()));
+
+        if (!progressed)
+            break;   // a cycle: what is left can never be satisfied
+    }
+
+    // Whatever is still waiting is a cycle the plan should have refused; report it
+    // rather than pretending it was handled.
+    for (const ExecuteItem& item : remaining)
     {
         ExecuteResultItem report;
         report.originalPath = item.fullPath;
         report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
-
-        const IdentitySnapshot before = ReadIdentity(item.fullPath);
-        if (!before.valid)
-        {
-            report.outcome = ExecuteOutcome::IdentityChanged;
-            report.detail = L"无法读取文件身份（可能已被移动或删除）";
-            rejected.push_back(std::move(report));
-            continue;
-        }
-
-        if (!TargetFree(report.targetPath))
-        {
-            // The single most important refusal: an existing target is never
-            // overwritten and never auto-suffixed (RN-FR-05, RN-T6-01).
-            report.outcome = ExecuteOutcome::Refused;
-            report.detail = L"目标已存在";
-            rejected.push_back(std::move(report));
-            continue;
-        }
-
-        accepted.push_back(item);
+        report.outcome = ExecuteOutcome::Refused;
+        report.detail = L"目标名字互相占用，无法排序";
+        rejected.push_back(std::move(report));
     }
 
-    if (!accepted.empty())
-    {
-        // The Shell owns rename, elevation and undo. FOFX_SHOWELEVATIONPROMPT lets
-        // it ask for rights rather than failing with a bare access-denied, and
-        // FOFX_ADDUNDORECORD is what makes Ctrl+Z work afterwards.
-        //
-        // FOF_RENAMEONCOLLISION is deliberately absent (RN-T6-01).
-        //
-        // The FOF_*/FOFX_* symbols live in shobjidl_core.h, which
-        // WIN32_LEAN_AND_MEAN excludes, so the documented values are spelled out
-        // here. Source: IFileOperation::SetOperationFlags (shellapi.h /
-        // shobjidl_core.h).
-        constexpr DWORD kFofAllowUndo = 0x0040;
-        constexpr DWORD kFofxAddUndoRecord = 0x2000000;
-        constexpr DWORD kFofxShowElevationPrompt = 0x400000;
-        const DWORD operationFlags = kFofAllowUndo | kFofxAddUndoRecord |
-                                     kFofxShowElevationPrompt;
+    result.undoAvailable = result.undoAvailable || undoAvailable;
 
-        ComPtr<IFileOperation> fileOperation;
-        HRESULT hr = ::CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
-                                        IID_PPV_ARGS(&fileOperation));
-        if (SUCCEEDED(hr))
-        {
-            hr = fileOperation->SetOperationFlags(operationFlags);
-        }
-
-        // Build a Shell item per accepted file. A failure to bind one item is
-        // reported for that item only.
-        std::vector<ComPtr<IShellItem>> shellItems;
-        std::vector<std::size_t> shellItemToAccepted;
-        if (SUCCEEDED(hr))
-        {
-            for (std::size_t i = 0; i < accepted.size(); ++i)
-            {
-                ComPtr<IShellItem> shellItem;
-                if (SUCCEEDED(::SHCreateItemFromParsingName(accepted[i].fullPath.c_str(), nullptr,
-                                                            IID_PPV_ARGS(&shellItem))))
-                {
-                    shellItems.push_back(std::move(shellItem));
-                    shellItemToAccepted.push_back(i);
-                }
-                else
-                {
-                    ExecuteResultItem report;
-                    report.originalPath = accepted[i].fullPath;
-                    report.targetPath = JoinPath(DirectoryOf(accepted[i].fullPath),
-                                                 accepted[i].targetLeaf);
-                    report.outcome = ExecuteOutcome::Failed;
-                    report.detail = L"Shell 无法解析该路径";
-                    rejected.push_back(std::move(report));
-                }
-            }
-
-            for (std::size_t s = 0; s < shellItems.size(); ++s)
-            {
-                const ExecuteItem& item = accepted[shellItemToAccepted[s]];
-                hr = fileOperation->RenameItem(shellItems[s].Get(), item.targetLeaf.c_str(), nullptr);
-                if (FAILED(hr))
-                {
-                    ExecuteResultItem report;
-                    report.originalPath = item.fullPath;
-                    report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
-                    report.outcome = ExecuteOutcome::Failed;
-                    report.detail = L"Shell 拒绝了改名请求";
-                    rejected.push_back(std::move(report));
-                }
-            }
-        }
-
-        if (SUCCEEDED(hr) && !shellItems.empty())
-        {
-            hr = fileOperation->PerformOperations();
-
-            // One result row per item the Shell was asked about. PerformOperations
-            // is all-or-nothing per queued item, so a failed overall HRESULT is
-            // reported per item rather than pretending some succeeded.
-            for (std::size_t s = 0; s < shellItems.size(); ++s)
-            {
-                const ExecuteItem& item = accepted[shellItemToAccepted[s]];
-                ExecuteResultItem report;
-                report.originalPath = item.fullPath;
-                report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
-
-                if (SUCCEEDED(hr))
-                {
-                    report.outcome = ExecuteOutcome::Renamed;
-                }
-                else
-                {
-                    BOOL aborted = FALSE;
-                    fileOperation->GetAnyOperationsAborted(&aborted);
-                    report.outcome = aborted ? ExecuteOutcome::Refused : ExecuteOutcome::Failed;
-                    report.detail = aborted ? L"已取消" : L"Shell 操作未完成";
-                }
-                result.items.push_back(std::move(report));
-            }
-
-            // Undo is only offered when the Shell actually accepted the record.
-            result.undoAvailable = SUCCEEDED(hr);
-        }
-
-        for (ExecuteResultItem& report : rejected)
-            result.items.push_back(std::move(report));
-    }
-    else
-    {
-        for (ExecuteResultItem& report : rejected)
-            result.items.push_back(std::move(report));
-    }
+    for (ExecuteResultItem& report : rejected)
+        result.items.push_back(std::move(report));
 
     result.batchJournalPath = WriteJournal(result.items, dataDir);
     return result;

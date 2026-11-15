@@ -177,6 +177,27 @@ if(RENAME_BUILD_QT)
     # main.cpp gains the window path; RENAME_HAVE_QT is what selects it there.
     target_link_libraries(rename PRIVATE rename_qml)
     target_compile_definitions(rename PRIVATE RENAME_HAVE_QT)
+
+    # ---- standalone window wrapper (local verification only) ----------------
+    # Not shipped: plugin.json names rename.exe, and only one program may be
+    # runtime.program. This executable exists so the window can be opened and
+    # driven on this machine with no host, no protocol and no .wsplugin:
+    #
+    #   rename-ui.exe --dir <folder> [--recursive]
+    #   rename-ui.exe --files <path> [<path>...]
+    #
+    # It links the same rename_qml and rename_win, so the code path under test is
+    # the plugin's own.
+    add_executable(rename_ui_exe ui/main-ui.cpp)
+    target_link_libraries(rename_ui_exe PRIVATE rename_qml rename_win)
+    set_target_properties(rename_ui_exe PROPERTIES AUTOMOC ON OUTPUT_NAME "rename-ui")
+    if(MSVC)
+        set_target_properties(rename_ui_exe PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
+    endif()
+    set_target_properties(rename_ui_exe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+        set_target_properties(rename_ui_exe PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
+    endforeach()
 else()
     message(STATUS "RENAME_BUILD_QT=OFF: building without the Qt Quick window")
 endif()
@@ -205,6 +226,12 @@ find_program(PWSH_EXECUTABLE NAMES pwsh)
 if(PWSH_EXECUTABLE)
     add_test(NAME core_purity
              COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File "${CMAKE_SOURCE_DIR}/tools/check_core_purity.ps1")
+    # The same kind of gate for the protocol side: a row's own fields live in
+    # `data`, and the host hands the item back as it came, so action() that reads
+    # `a.item["batch"]` answers "No files selected" to a row that carried one.
+    # TEST-SPEC.md LS-S10-01…03.
+    add_test(NAME action_payload
+             COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File "${CMAKE_SOURCE_DIR}/tools/check-action-payload.ps1")
 else()
     message(WARNING "pwsh not found: the core/ purity gate is not registered as a test")
 endif()

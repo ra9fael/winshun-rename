@@ -1,14 +1,18 @@
-// Main.qml — the window both modes live in (UI-SPEC.md §1-§3).
+// Main.qml — the rename window, laid out like PowerRename.
 //
-// Every piece of state comes from `bridge`; this file only renders it and
-// forwards input, so a QML change can never alter what a rename does.
+// Left column is the rule: find, three switches, replace, "apply to", text
+// formatting, and the two time/metadata sources. Right side is the table: the
+// original name and the name it will become, one row per item. That split is the
+// whole reason this layout is worth copying — the rule is written once on the
+// left, and what it does is visible on the right as you type.
 //
-// The look follows Win顺 rather than inventing a theme: every colour and radius
-// is read from Theme.qml, which resolves the host's `appearance.nativeLook`.
-// QtQuick.Controls.Basic draws nothing of its own, so the controls are styled
-// here to read as Win顺's: flat rows, the accent only for the one action that
-// changes files, and a status that is always spelled out in words beside its
-// colour (UI-SPEC.md §4.3).
+// Every value comes from `bridge`; this file renders it and forwards input, so a
+// QML change can never alter what a rename does.
+//
+// Look: Win顺's fluent tokens from Tokens.qml (the host's `appearance.nativeLook`
+// resolved). QtQuick.Controls.Basic draws nothing of its own, so each control is
+// styled here: flat surfaces, one accent for the primary action, and a status
+// always spelled out in words beside its colour.
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
@@ -16,62 +20,85 @@ import QtQuick.Layouts
 ApplicationWindow {
     id: root
 
-    width: 980
-    height: 680
-    minimumWidth: 720
-    minimumHeight: 480
+    width: 822
+    height: 616
+    minimumWidth: 700
+    minimumHeight: 520
     visible: true
     color: Theme.background
-    title: root.zh ? "重命名" : "Rename"
+    title: root.t("重命名", "Rename")
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint
 
     readonly property bool zh: bridge.locale.indexOf("zh") === 0
-
     function t(zhText, enText) { return root.zh ? zhText : enText }
 
-    // ---- shared widgets ---------------------------------------------------
-    component FlatButton: Button {
+    // ---- shared controls --------------------------------------------------
+    component Field: TextField {
         id: control
-        property bool primary: false
-        implicitHeight: Theme.controlHeight
-        implicitWidth: Math.max(72, label.implicitWidth + 24)
-        padding: 0
+        property bool invalid: false
+        implicitHeight: 32
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
-        contentItem: Text {
-            id: label
-            text: control.text
-            font: control.font
-            color: control.primary ? Theme.accentText
-                                   : (control.hovered ? Theme.text : Theme.subtext)
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
-        }
+        color: Theme.text
+        placeholderTextColor: Theme.faint
+        leftPadding: 9
+        rightPadding: 9
+        selectByMouse: true
+        selectionColor: Theme.textSelection
         background: Rectangle {
-            radius: control.primary ? Theme.controlRadius : Theme.controlRadius
-            color: {
-                if (!control.enabled)
-                    return "transparent"
-                if (control.primary)
-                    return control.pressed ? Qt.darker(Theme.accentFill, 1.15) : Theme.accentFill
-                return control.pressed ? Theme.pressed : (control.hovered ? Theme.hover : "transparent")
-            }
-            border.width: control.primary || !control.enabled ? 0 : 1
-            border.color: control.enabled ? Theme.controlBorder : Theme.divider
-            opacity: control.enabled ? 1.0 : 0.55
+            radius: Theme.controlRadius
+            color: control.activeFocus ? Theme.inputFocused : Theme.control
+            border.width: 1
+            border.color: control.invalid ? Theme.danger
+                        : (control.activeFocus ? Theme.accent : Theme.controlBorder)
         }
     }
 
-    component FlatCheckBox: CheckBox {
+    // The small round "i" beside a field: a tooltip anchor, not a button.
+    component Hint: Item {
+        id: hint
+        property string text: ""
+        implicitWidth: 21
+        implicitHeight: 21
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: "transparent"
+            border.width: 1
+            border.color: hintHover.hovered ? Theme.subtext : Theme.controlBorder
+        }
+        Text {
+            anchors.centerIn: parent
+            text: "i"
+            color: hintHover.hovered ? Theme.text : Theme.faint
+            font.family: Theme.fontFamily
+            font.pixelSize: 11
+        }
+        HoverHandler { id: hintHover }
+        ToolTip.visible: hintHover.hovered && hint.text.length > 0
+        ToolTip.text: hint.text
+        ToolTip.delay: 400
+    }
+
+    component Switch2: CheckBox {
         id: control
-        implicitHeight: Theme.rowHeight
-        implicitWidth: 16
+        implicitHeight: 20
+        spacing: 9
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.fontBody
+        contentItem: Text {
+            text: control.text
+            font: control.font
+            color: Theme.text
+            leftPadding: control.indicator.width + control.spacing
+            verticalAlignment: Text.AlignVCenter
+        }
         indicator: Rectangle {
             id: box
+            x: 0
+            y: (control.height - height) / 2
             implicitWidth: 16
             implicitHeight: 16
-            anchors.verticalCenter: parent.verticalCenter
             radius: Theme.smallControlRadius
             color: control.checked ? Theme.accentFill : "transparent"
             border.width: 1
@@ -85,39 +112,17 @@ ApplicationWindow {
                 font.pixelSize: 11
             }
         }
-        contentItem: Item {
-            implicitWidth: 0
-            implicitHeight: 0
-        }
     }
 
-    component FlatField: TextField {
+    component Dropdown: ComboBox {
         id: control
-        implicitHeight: Theme.controlHeight
+        implicitHeight: 32
+        implicitWidth: 150
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontBody
-        color: Theme.text
-        placeholderTextColor: Theme.faint
-        leftPadding: 8
-        rightPadding: 8
-        background: Rectangle {
-            radius: Theme.controlRadius
-            color: control.activeFocus ? Theme.inputFocused : Theme.control
-            border.width: 1
-            border.color: control.activeFocus ? Theme.accent : Theme.controlBorder
-        }
-    }
-
-    component FlatCombo: ComboBox {
-        id: control
-        implicitHeight: Theme.controlHeight
-        implicitWidth: Math.max(96, contentLabel.implicitWidth + 32)
-        font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontBody
-        leftPadding: 8
-        rightPadding: 8
+        leftPadding: 9
+        rightPadding: 26
         contentItem: Text {
-            id: contentLabel
             text: control.displayText
             font: control.font
             color: Theme.text
@@ -125,7 +130,7 @@ ApplicationWindow {
             elide: Text.ElideRight
         }
         indicator: Text {
-            x: control.width - width - 8
+            x: control.width - width - 9
             y: (control.height - height) / 2
             text: "\u2304"
             color: Theme.subtext
@@ -141,10 +146,10 @@ ApplicationWindow {
         delegate: ItemDelegate {
             id: item
             width: control.width
-            implicitHeight: Theme.rowHeight - 8
+            implicitHeight: 30
             highlighted: control.highlightedIndex === index
             contentItem: Text {
-                leftPadding: 8
+                leftPadding: 9
                 text: item.text
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody
@@ -176,247 +181,485 @@ ApplicationWindow {
         }
     }
 
+    // PowerRename's "Apply to" trio: square buttons beside the dropdown, the
+    // chosen one filled with the accent.
+    component ScopeButton: Rectangle {
+        id: sg
+        property string glyph: ""
+        property string tip: ""
+        property bool chosen: false
+        property int scopeIndex: 0
+        implicitWidth: 32
+        implicitHeight: 32
+        radius: Theme.controlRadius
+        color: sg.chosen ? Theme.accentFill
+                         : (sgHover.hovered ? Theme.controlHover : Theme.control)
+        border.width: sg.chosen ? 0 : 1
+        border.color: Theme.controlBorder
+        Text {
+            anchors.centerIn: parent
+            text: sg.glyph
+            font.pixelSize: 13
+            color: sg.chosen ? Theme.accentText : Theme.subtext
+        }
+        HoverHandler { id: sgHover }
+        ToolTip.visible: sgHover.hovered && sg.tip.length > 0
+        ToolTip.text: sg.tip
+        ToolTip.delay: 400
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: bridge.setScope(sg.scopeIndex)
+        }
+    }
+
+    // A text-formatting chip ("aa", "AA", "Aa", "Aa Aa"): a case transform over
+    // the whole batch. `caseFlag` is what the bridge maps to a core flag.
+    component FormatButton: Rectangle {
+        id: fb
+        property string glyph: ""
+        property string tip: ""
+        property bool chosen: false
+        property int caseFlag: 0
+        implicitWidth: 32
+        implicitHeight: 32
+        radius: Theme.controlRadius
+        color: fb.chosen ? Theme.accentFill : (fbHover.hovered ? Theme.controlHover : Theme.control)
+        border.width: fb.chosen ? 0 : 1
+        border.color: Theme.controlBorder
+        Text {
+            anchors.centerIn: parent
+            text: fb.glyph
+            font.family: Theme.fontFamily
+            font.pixelSize: 13
+            color: fb.chosen ? Theme.accentText : Theme.text
+        }
+        HoverHandler { id: fbHover }
+        ToolTip.visible: fbHover.hovered && fb.tip.length > 0
+        ToolTip.text: fb.tip
+        ToolTip.delay: 400
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: bridge.setCaseTransform(fb.caseFlag)
+        }
+    }
+
+    component RoundIcon: Rectangle {
+        id: ri
+        property string glyph: ""
+        property string tip: ""
+        implicitWidth: 28
+        implicitHeight: 28
+        radius: width / 2
+        color: riHover.hovered ? Theme.hover : "transparent"
+        Text {
+            anchors.centerIn: parent
+            text: ri.glyph
+            font.pixelSize: 14
+            color: Theme.subtext
+        }
+        HoverHandler { id: riHover }
+        ToolTip.visible: riHover.hovered && ri.tip.length > 0
+        ToolTip.text: ri.tip
+        ToolTip.delay: 400
+    }
+
     // ---- status words -----------------------------------------------------
     function isError(status) {
         return status === "exists" || status === "too-long" ||
                status === "invalid-character" || status === "empty-name" ||
                status === "bad-rule"
     }
+
     function statusWord(status) {
         switch (status) {
-        case "ready": return root.t("\u5f85\u6539", "ready")
-        case "unchanged": return root.t("\u4e0d\u53d8", "unchanged")
-        case "exists": return root.t("\u5df2\u5b58\u5728", "exists")
-        case "too-long": return root.t("\u8fc7\u957f", "too long")
-        case "invalid-character": return root.t("\u975e\u6cd5\u5b57\u7b26", "invalid character")
-        case "empty-name": return root.t("\u7a7a\u540d\u5b57", "empty name")
-        case "bad-rule": return root.t("\u89c4\u5219\u9519\u8bef", "bad rule")
+        case "ready": return root.t("待改", "ready")
+        case "unchanged": return root.t("不变", "unchanged")
+        case "exists": return root.t("已存在", "exists")
+        case "too-long": return root.t("过长", "too long")
+        case "invalid-character": return root.t("非法字符", "invalid char")
+        case "empty-name": return root.t("空名字", "empty name")
+        case "bad-rule": return root.t("规则错误", "bad rule")
         default: return status
         }
     }
-    // The presenter's notes are stable identifiers ("trimmed nbsp"); map each to
-    // the user's language here, so the C++ side never learns any wording.
-    function noteText(note) {
-        if (!note)
-            return ""
-        const parts = []
-        const words = note.split(" ")
-        for (let i = 0; i < words.length; ++i) {
-            switch (words[i]) {
-            case "no-extension": parts.push(root.t("\u65e0\u6269\u5c55\u540d\uff0c\u6269\u5c55\u540d\u89c4\u5219\u672a\u5e94\u7528", "no extension; extension rule not applied")); break
-            case "trimmed": parts.push(root.t("\u5df2\u53bb\u9664\u5c3e\u90e8\u7a7a\u683c\u6216\u70b9", "trailing whitespace or dot removed")); break
-            case "nbsp": parts.push(root.t("\u4e0d\u95f4\u65ad\u7a7a\u683c\u6309\u666e\u901a\u7a7a\u683c\u5904\u7406", "non-breaking space treated as a space")); break
-            default: parts.push(words[i])
-            }
-        }
-        return parts.join(root.t("\uff1b", "; "))
-    }
 
-    // ---- layout -----------------------------------------------------------
+    // ---- body -------------------------------------------------------------
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // header: what this window is, and the mode switch
+        // ============== title strip ========================================
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: Theme.headerHeight
+            implicitHeight: 36
             color: Theme.layer
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
+                anchors.leftMargin: 12
+                anchors.rightMargin: 6
                 spacing: 8
 
+                Text { text: "\u270E"; color: Theme.subtext; font.pixelSize: 13 }
                 Text {
-                    text: root.t("\u91cd\u547d\u540d", "Rename")
-                    color: Theme.text
+                    text: root.t("重命名", "Rename")
+                    color: Theme.subtext
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontTitle
-                    font.weight: Font.DemiBold
+                    font.pixelSize: 13
                 }
                 Item { Layout.fillWidth: true }
 
-                FlatButton {
-                    text: root.t("\u89c4\u5219", "Rules")
-                    primary: bridge.mode !== "text"
-                    onClicked: bridge.switchMode("control")
+                // The two ways to describe a change.
+                Rectangle {
+                    implicitWidth: modeRuleText.implicitWidth + 20
+                    implicitHeight: 24
+                    radius: Theme.controlRadius
+                    color: bridge.mode !== "text" ? Theme.accentFill : "transparent"
+                    Text {
+                        id: modeRuleText
+                        anchors.centerIn: parent
+                        text: root.t("规则", "Rules")
+                        color: bridge.mode !== "text" ? Theme.accentText : Theme.subtext
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        font.weight: bridge.mode !== "text" ? Font.DemiBold : Font.Normal
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: bridge.switchMode("control")
+                    }
                 }
-                FlatButton {
-                    text: root.t("\u6587\u672c", "Text")
-                    primary: bridge.mode === "text"
-                    onClicked: bridge.switchMode("text")
+                Rectangle {
+                    Layout.rightMargin: 4
+                    implicitWidth: modeTextText.implicitWidth + 20
+                    implicitHeight: 24
+                    radius: Theme.controlRadius
+                    color: bridge.mode === "text" ? Theme.accentFill : "transparent"
+                    Text {
+                        id: modeTextText
+                        anchors.centerIn: parent
+                        text: root.t("文本", "Text")
+                        color: bridge.mode === "text" ? Theme.accentText : Theme.subtext
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        font.weight: bridge.mode === "text" ? Font.DemiBold : Font.Normal
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: bridge.switchMode("text")
+                    }
                 }
             }
         }
 
         Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.divider }
 
-        // ---- control mode: one rule row ----------------------------------
-        // One row covers the common case; the chain editor is the next
-        // milestone, so this says only what actually works today.
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: Theme.headerHeight
-            visible: bridge.mode !== "text"
-            color: Theme.background
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
-                spacing: 8
-
-                FlatCheckBox {
-                    id: ruleEnabled
-                    checked: true
-                    onToggled: pushRule()
-                }
-                FlatCombo {
-                    id: ruleScope
-                    model: [root.t("\u6587\u4ef6\u540d", "Name"),
-                            root.t("\u6269\u5c55\u540d", "Extension"),
-                            root.t("\u5168\u540d", "Full name")]
-                    currentIndex: 0
-                    onCurrentIndexChanged: pushRule()
-                }
-                FlatCombo {
-                    id: ruleMatch
-                    model: [root.t("\u6587\u672c", "Literal"), root.t("\u6b63\u5219", "Regex")]
-                    currentIndex: 0
-                    onCurrentIndexChanged: pushRule()
-                }
-                FlatField {
-                    id: ruleFind
-                    Layout.fillWidth: true
-                    placeholderText: root.t("\u67e5\u627e", "Find")
-                    onEditingFinished: pushRule()
-                }
-                Text {
-                    text: "\u2192"
-                    color: Theme.faint
-                    font.pixelSize: Theme.fontBody
-                }
-                FlatField {
-                    id: ruleReplace
-                    Layout.fillWidth: true
-                    placeholderText: root.t("\u66ff\u6362\u4e3a", "Replace with")
-                    onEditingFinished: pushRule()
-                }
-            }
-        }
-
-        // ---- text mode: the oil buffer -----------------------------------
-        Rectangle {
+        // ============== panes ==============================================
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: bridge.mode === "text"
-            color: Theme.background
+            spacing: 0
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 16
-                spacing: 6
+            // -------- left: the rule ---------------------------------------
+            Rectangle {
+                Layout.preferredWidth: 348
+                Layout.fillHeight: true
+                color: Theme.background
 
-                Text {
-                    text: root.t("一行一个名字；行首的 /<id> 指向文件本身，不要改",
-                                 "One name per line; the /<id> prefix anchors the line to a file. Do not edit it.")
-                    color: Theme.subtext
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSmall
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.topMargin: 14
+                    spacing: 0
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: Theme.controlRadius
-                    color: Theme.control
-                    border.width: 1
-                    border.color: oilEditor.activeFocus ? Theme.accent : Theme.controlBorder
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Field {
+                            id: findField
+                            Layout.fillWidth: true
+                            placeholderText: root.t("查找", "Find")
+                            text: bridge.ruleFind
+                            invalid: bridge.ruleRegexInvalid
+                            onEditingFinished: root.pushRule()
+                        }
+                        Hint {
+                            text: root.t("要在名字里找的文字；打开“使用正则表达式”后按正则解释",
+                                         "Text to look for; with regular expressions it is a pattern")
+                        }
+                    }
 
-                    Flickable {
-                        anchors.fill: parent
-                        anchors.margins: 4
-                        clip: true
-                        boundsBehavior: Flickable.StopAtBounds
-                        flickableDirection: Flickable.VerticalFlick
-                        contentWidth: oilEditor.implicitWidth
-                        contentHeight: oilEditor.implicitHeight
-                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                    ColumnLayout {
+                        Layout.topMargin: 9
+                        spacing: 8
+                        Switch2 {
+                            id: regexSwitch
+                            text: root.t("使用正则表达式", "Use regular expressions")
+                            checked: bridge.ruleMatch === 1
+                            onToggled: root.pushRule()
+                        }
+                        Switch2 {
+                            id: matchAllSwitch
+                            text: root.t("替换全部匹配", "Match all occurrences")
+                            checked: bridge.ruleMatchAll
+                            onToggled: root.pushRule()
+                        }
+                        Switch2 {
+                            id: sensitiveSwitch
+                            text: root.t("区分大小写", "Case sensitive")
+                            checked: bridge.ruleCaseSensitive
+                            onToggled: root.pushRule()
+                        }
+                    }
 
-                        TextArea {
-                            id: oilEditor
-                            width: parent.width
-                            font.family: Theme.monoFamily
-                            font.pixelSize: Theme.fontBody
-                            color: Theme.text
-                            wrapMode: TextEdit.NoWrap
-                            selectByMouse: true
-                            selectionColor: Theme.textSelection
-                            background: null
-                            text: bridge.buffer
-                            // Only a user edit is pushed back: assigning `text`
-                            // fires this too, and echoing it would move the caret.
-                            onTextChanged: {
-                                if (text !== bridge.buffer)
-                                    bridge.buffer = text
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        implicitHeight: 1
+                        color: Theme.divider
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        spacing: 6
+                        Field {
+                            id: replaceField
+                            Layout.fillWidth: true
+                            placeholderText: root.t("替换为", "Replace with")
+                            text: bridge.ruleReplace
+                            onEditingFinished: root.pushRule()
+                        }
+                        Hint {
+                            text: root.t("新的文字；$1 这样的分组引用需要“使用正则表达式”",
+                                         "The new text; $1 style groups need regular expressions")
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        spacing: 6
+                        Text {
+                            text: root.t("应用于", "Apply to")
+                            color: Theme.subtext
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 12
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Dropdown {
+                                id: scopeBox
+                                Layout.fillWidth: true
+                                model: [root.t("文件名", "Name"),
+                                        root.t("仅扩展名", "Extension only"),
+                                        root.t("完整名称", "Full name")]
+                                currentIndex: bridge.ruleScope
+                                onActivated: bridge.setScope(currentIndex)
+                            }
+                            ScopeButton {
+                                glyph: "\uE8A5"
+                                tip: root.t("文件名", "Name")
+                                scopeIndex: 0
+                                chosen: bridge.ruleScope === 0
+                            }
+                            ScopeButton {
+                                glyph: "\uE8B7"
+                                tip: root.t("仅扩展名", "Extension only")
+                                scopeIndex: 1
+                                chosen: bridge.ruleScope === 1
+                            }
+                            ScopeButton {
+                                glyph: "\uE8B9"
+                                tip: root.t("完整名称", "Full name")
+                                scopeIndex: 2
+                                chosen: bridge.ruleScope === 2
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        spacing: 6
+                        Text {
+                            text: root.t("文本格式", "Text formatting")
+                            color: Theme.subtext
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 12
+                        }
+                        RowLayout {
+                            spacing: 6
+                            FormatButton {
+                                glyph: "aa"
+                                tip: root.t("全部小写", "lowercase")
+                                caseFlag: 1
+                                chosen: bridge.caseTransform === 1
+                            }
+                            FormatButton {
+                                glyph: "AA"
+                                tip: root.t("全部大写", "UPPERCASE")
+                                caseFlag: 2
+                                chosen: bridge.caseTransform === 2
+                            }
+                            FormatButton {
+                                glyph: "Aa"
+                                tip: root.t("首字母大写", "Capitalize")
+                                caseFlag: 3
+                                chosen: bridge.caseTransform === 3
+                            }
+                            FormatButton {
+                                glyph: "Aa Aa"
+                                tip: root.t("每词首字母大写", "Title Case")
+                                caseFlag: 4
+                                chosen: bridge.caseTransform === 4
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 14
+                        spacing: 12
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Text {
+                                text: root.t("时间模板基准", "Time used for replacement")
+                                color: Theme.subtext
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Dropdown {
+                                Layout.fillWidth: true
+                                model: [root.t("创建时间", "Creation time"),
+                                        root.t("修改时间", "Modified time"),
+                                        root.t("访问时间", "Accessed time")]
+                                currentIndex: 0
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Text {
+                                text: root.t("元数据来源", "Metadata source")
+                                color: Theme.subtext
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                            }
+                            Dropdown {
+                                Layout.fillWidth: true
+                                model: ["EXIF", "XMP"]
+                                currentIndex: 0
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: 13
+                        spacing: 8
+                        RoundIcon { glyph: "\uE713"; tip: root.t("设置", "Settings") }
+                        RoundIcon { glyph: "?"; tip: root.t("帮助", "Help") }
+                        Item { Layout.fillWidth: true }
+
+                        // The one verb. Hidden after a finished batch: there is
+                        // nothing left to run, and a disabled "Rename 0" beside
+                        // "Renamed 3" reads as a failure.
+                        Rectangle {
+                            visible: bridge.doneLine.length === 0
+                            implicitWidth: applyLabel.implicitWidth + 30
+                            implicitHeight: 33
+                            radius: Theme.controlRadius
+                            color: !bridge.canExecute ? Theme.control
+                                 : (applyHover.hovered ? Qt.lighter(Theme.accentFill, 1.08) : Theme.accentFill)
+                            border.width: bridge.canExecute ? 0 : 1
+                            border.color: Theme.controlBorder
+                            Text {
+                                id: applyLabel
+                                anchors.centerIn: parent
+                                text: "\u270E  " + root.t("重命名 " + bridge.readyCount + " 项",
+                                                           "Rename " + bridge.readyCount)
+                                color: bridge.canExecute ? Theme.accentText : Theme.faint
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                font.weight: bridge.canExecute ? Font.DemiBold : Font.Normal
+                            }
+                            HoverHandler { id: applyHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: bridge.canExecute ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: if (bridge.canExecute) bridge.apply()
                             }
                         }
                     }
                 }
             }
-        }
 
-        // ---- preview table -----------------------------------------------
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            color: Theme.background
+            Rectangle { Layout.fillHeight: true; implicitWidth: 1; color: Theme.divider }
 
+            // -------- right: the table -------------------------------------
             ColumnLayout {
-                anchors.fill: parent
+                Layout.fillWidth: true
+                Layout.fillHeight: true
                 spacing: 0
 
-                RowLayout {
+                Rectangle {
                     Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.topMargin: 4
-                    Layout.bottomMargin: 4
-                    spacing: 8
+                    implicitHeight: 33
+                    color: Theme.background
 
-                    FlatCombo {
-                        id: filterBox
-                        model: [root.t("\u5168\u90e8", "All"),
-                                root.t("\u5df2\u9009", "Selected"),
-                                root.t("\u53ef\u6539", "Applicable"),
-                                root.t("\u4f1a\u6539", "To rename")]
-                        currentIndex: 0
-                        onCurrentIndexChanged: {
-                            const names = ["all", "selected", "applicable", "to-rename"]
-                            bridge.setFilter(names[Math.max(0, Math.min(3, currentIndex))])
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 13
+                        anchors.rightMargin: 12
+                        spacing: 0
+
+                        Switch2 {
+                            implicitWidth: 24
+                            checked: bridge.allSelected
+                            onToggled: bridge.selectAll(checked)
                         }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.t("原始 (" + bridge.totalCount + ")",
+                                         "Original (" + bridge.totalCount + ")")
+                            color: Theme.subtext
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                            leftPadding: 4
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.t("重命名后 (" + bridge.readyCount + ")",
+                                         "Renamed (" + bridge.readyCount + ")")
+                            color: Theme.subtext
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 13
+                        }
+                        Text { text: "\u23F7"; color: Theme.faint; font.pixelSize: 12 }
                     }
 
-                    Item { Layout.fillWidth: true }
-
-                    FlatButton {
-                        text: root.t("\u5168\u9009", "Select all")
-                        enabled: bridge.visibleCount > 0
-                        onClicked: bridge.selectAll(true)
-                    }
-                    FlatButton {
-                        text: root.t("\u5168\u4e0d\u9009", "Select none")
-                        enabled: bridge.visibleCount > 0
-                        onClicked: bridge.selectAll(false)
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        height: 1
+                        color: Theme.divider
                     }
                 }
 
                 ListView {
-                    id: preview
+                    id: table
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
@@ -436,144 +679,167 @@ ApplicationWindow {
                         required property int depth
                         required property string note
 
-                        width: preview.width
-                        implicitHeight: Theme.rowHeight
+                        readonly property bool same: status === "unchanged"
+                        readonly property bool blocked: root.isError(status)
+
+                        width: table.width
+                        implicitHeight: 34
                         color: rowHover.hovered ? Theme.hover : "transparent"
 
                         HoverHandler { id: rowHover }
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 16 + rowItem.depth * 16
-                            anchors.rightMargin: 16
-                            spacing: 8
+                            anchors.leftMargin: 13
+                            anchors.rightMargin: 12
+                            spacing: 0
 
-                            FlatCheckBox {
+                            Switch2 {
+                                implicitWidth: 24
                                 checked: rowItem.selected
                                 onToggled: bridge.toggleRow(rowItem.rowId, checked)
                             }
                             Text {
+                                Layout.preferredWidth: 18
                                 text: rowItem.isFolder ? "\uE8B7" : "\uE8A5"
                                 font.family: "Segoe Fluent Icons"
-                                font.pixelSize: Theme.fontBody
-                                color: Theme.faint
-                            }
-                            Text {
-                                Layout.preferredWidth: Math.max(160, (rowItem.width - 260) / 2)
-                                text: rowItem.originalName
-                                color: Theme.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontBody
-                                elide: Text.ElideMiddle
-                            }
-                            Text {
-                                text: "\u2192"
-                                color: Theme.faint
-                                font.pixelSize: Theme.fontBody
+                                font.pixelSize: 12
+                                color: Theme.subtext
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: rowItem.targetName
-                                color: rowItem.status === "ready" ? Theme.text : Theme.subtext
+                                text: rowItem.originalName
+                                color: rowItem.blocked ? Theme.faint
+                                     : (rowItem.same ? Theme.subtext : Theme.text)
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fontBody
                                 elide: Text.ElideMiddle
+                                rightPadding: 8
                             }
                             Text {
-                                // The word, then the colour: never colour alone.
-                                text: root.statusWord(rowItem.status)
-                                      + (rowItem.note ? "  \u00b7  " + root.noteText(rowItem.note) : "")
-                                color: root.isError(rowItem.status) ? Theme.danger
-                                     : (rowItem.status === "ready" ? Theme.ok : Theme.faint)
+                                Layout.fillWidth: true
+                                // A blocked row says why in place of a name: the
+                                // red words are the whole point of that row.
+                                text: rowItem.blocked
+                                      ? (rowItem.status === "exists"
+                                         ? root.t("目标已存在：" + rowItem.targetName,
+                                                  "target exists: " + rowItem.targetName)
+                                         : root.statusWord(rowItem.status))
+                                      : rowItem.targetName
+                                color: rowItem.blocked ? Theme.danger
+                                     : (rowItem.same ? Theme.faint : Theme.text)
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSmall
-                                elide: Text.ElideRight
-                                Layout.maximumWidth: 260
+                                font.pixelSize: Theme.fontBody
+                                font.weight: (!rowItem.blocked && !rowItem.same) ? Font.DemiBold : Font.Normal
+                                elide: Text.ElideMiddle
                             }
                         }
-
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            width: parent.width
-                            height: 1
-                            color: Theme.divider
-                        }
                     }
 
-                    // The table says why it is empty: a finished batch is not
-                    // the same as never having files.
+                    // Empty state: a finished batch is not the same as no files.
                     Text {
                         anchors.centerIn: parent
-                        width: Math.min(implicitWidth, preview.width - 48)
-                        visible: preview.count === 0
+                        width: Math.min(implicitWidth, table.width - 88)
+                        visible: table.count === 0
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
-                        text: bridge.doneLine.length > 0 ? bridge.doneLine
-                              : root.t("没有文件。选中文件后，从结果菜单进入“重命名…”。",
-                                       "No files. Select files, then pick “Rename…” from the result menu.")
+                        text: bridge.doneLine.length > 0
+                              ? bridge.doneLine + "\n"
+                                + root.t("可在资源管理器里按 Ctrl+Z 撤消", "Undo with Ctrl+Z in Explorer")
+                              : root.t("这里会列出要改名的文件。\n从文件夹标签打开，或选中文件后右键“重命名…”。",
+                                       "The files to rename appear here.\nOpen it from a folder tab, or right-click selected files.")
                         color: bridge.doneLine.length > 0 ? Theme.ok : Theme.faint
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontBody
+                        font.pixelSize: bridge.doneLine.length > 0 ? 15 : 13
                     }
                 }
-            }
-        }
 
-        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.divider }
-
-        // ---- action bar ---------------------------------------------------
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: Theme.footerHeight + 12
-            color: Theme.layer
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
-                spacing: 12
-
-                Text {
-                    text: root.t(bridge.readyCount + " 项会改 \u00b7 " + bridge.unchangedCount
-                                 + " 项不变 \u00b7 " + bridge.errorCount + " 项有问题",
-                                 bridge.readyCount + " to rename \u00b7 " + bridge.unchangedCount
-                                 + " unchanged \u00b7 " + bridge.errorCount + " with problems")
-                    color: Theme.subtext
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
-
-                Text {
+                Rectangle {
                     Layout.fillWidth: true
-                    text: bridge.blockingReason
-                    color: Theme.danger
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                    elide: Text.ElideRight
-                    visible: text.length > 0
-                }
+                    implicitHeight: 30
+                    color: Theme.layer
 
-                FlatButton {
-                    text: root.t("\u53d6\u6d88", "Cancel")
-                    onClicked: root.close()
-                }
-                FlatButton {
-                    primary: true
-                    enabled: bridge.canExecute
-                    text: root.t("\u91cd\u547d\u540d " + bridge.readyCount + " \u9879",
-                                 "Rename " + bridge.readyCount)
-                    onClicked: bridge.apply()
+                    Rectangle {
+                        anchors.top: parent.top
+                        width: parent.width
+                        height: 1
+                        color: Theme.divider
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        spacing: 12
+
+                        Rectangle {
+                            implicitWidth: 7
+                            implicitHeight: 7
+                            radius: 4
+                            color: bridge.doneLine.length > 0 ? Theme.ok
+                                 : (bridge.errorCount > 0 ? Theme.caution
+                                    : (bridge.readyCount > 0 ? Theme.ok : Theme.faint))
+                        }
+                        Text {
+                            text: {
+                                if (bridge.doneLine.length > 0)
+                                    return bridge.doneLine
+                                let line = root.t(bridge.readyCount + " 项会改 · "
+                                                  + bridge.unchangedCount + " 项不变",
+                                                  bridge.readyCount + " to rename · "
+                                                  + bridge.unchangedCount + " unchanged")
+                                if (bridge.errorCount > 0)
+                                    line += root.t(" · " + bridge.errorCount + " 项冲突或有问题",
+                                                   " · " + bridge.errorCount + " blocked")
+                                else if (bridge.readyCount > 0)
+                                    line += root.t(" · 无冲突", " · no conflicts")
+                                return line
+                            }
+                            color: Theme.subtext
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 12
+                        }
+                        Item { Layout.fillWidth: true }
+                        Text {
+                            text: bridge.blockingReason.length > 0
+                                  ? bridge.blockingReason
+                                  : (bridge.readyCount > 0
+                                     ? root.t("Enter 执行 · 可在资源管理器撤消",
+                                              "Enter runs it · undoable in Explorer")
+                                     : root.t("在上方输入查找与替换",
+                                              "Type a find and a replace above"))
+                            color: bridge.blockingReason.length > 0 ? Theme.danger : Theme.faint
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                    }
                 }
             }
         }
     }
 
-    // The rule row forwards its four controls as one rule.
+    // ---- input forwarded to the bridge ------------------------------------
     function pushRule() {
-        bridge.setSingleRule(ruleScope.currentIndex,
-                             ruleMatch.currentIndex,
-                             ruleFind.text,
-                             ruleReplace.text,
-                             ruleEnabled.checked)
+        bridge.setRule(bridge.ruleScope,
+                       regexSwitch.checked ? 1 : 0,
+                       findField.text,
+                       replaceField.text,
+                       bridge.ruleEnabled,
+                       matchAllSwitch.checked,
+                       sensitiveSwitch.checked)
+    }
+
+    // Enter runs the batch, as PowerRename's Enter does; Escape closes. The two
+    // text fields keep Enter for themselves (they commit the rule first), which is
+    // why this is on the window and not on the button only.
+    Shortcut {
+        sequences: ["Return", "Enter"]
+        enabled: !findField.activeFocus && !replaceField.activeFocus && bridge.canExecute
+        onActivated: bridge.apply()
+    }
+    Shortcut {
+        sequence: "Esc"
+        onActivated: root.close()
     }
 }

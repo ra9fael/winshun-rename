@@ -551,6 +551,40 @@ TEST_CASE(PlanDetectsTargetAlreadyExists)
     CHECK(blocked);
 }
 
+TEST_CASE(PlanWaitsForTheRowThatFreesItsTarget)
+{
+    // The real case, straight from the window: replacing 报告 with 2026报告 in a
+    // folder that already holds "2026报告.pdf".
+    //   报告.pdf      -> 2026报告.pdf        (takes the other row's current name)
+    //   2026报告.pdf  -> 20262026报告.pdf    (frees it in the same batch)
+    // Neither row may block — the batch is legal — but "报告.pdf" can only run
+    // *after* the row that frees its target, and the plan must say so.
+    std::vector<ItemSnapshot> items = {item(L"报告.pdf"), item(L"2026报告.pdf")};
+    items[0].id = "1";
+    items[1].id = "2";
+
+    const RuleChain chain = singleRule(Scope::Name, L"报告", L"2026报告");
+    const PreviewPlan plan = BuildControlPlan(items, chain, 0, NextPlanId());
+
+    bool blocked = false;
+    for (const PlanItem& row : plan.items)
+    {
+        if (row.status == Status::ErrorAlreadyExists)
+            blocked = true;
+    }
+    CHECK(!blocked);
+    CHECK_EQ(plan.CountByStatus(Status::Ready), 2);
+
+    // Row 1's target is row 2's current name, so row 1 waits for row 2.
+    bool recorded = false;
+    for (const PlanItem& row : plan.items)
+    {
+        if (row.id == "1")
+            recorded = row.waitsForId == "2";
+    }
+    CHECK(recorded);
+}
+
 TEST_CASE(PlanMarksUnchangedWhenNoRuleMatches)
 {
     const RuleChain chain = singleRule(Scope::Name, L"zzz", L"yyy");

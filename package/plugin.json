@@ -24,18 +24,18 @@
     "idleExitSec": 0,
     "encoding": "utf-8"
   },
-  "permissions": ["ui", "files:read", "files:write"],
+  "permissions": ["ui", "files:read", "files:write", "winshun:search"],
   "commands": [
     {
       "id": "rename",
       "keyword": ["rename", "重命名"],
       "title": {"zh": "重命名", "en": "Rename"},
       "description": {
-        "zh": "选中文件后从结果菜单进入，窗口里预览每项的新名字再执行",
-        "en": "Reach it from the result menu on selected files; preview every new name in the window before running"
+        "zh": "rename <模式> [-> 替换] 直接预览并改名（如 rename photo_ -> holiday_，或 rename 报告 -> 2026报告）；也可以选中文件后从右键菜单进入窗口逐项预览",
+        "en": "rename <pattern> [-> replace] previews and renames right in the box (e.g. rename photo_ -> holiday_, or rename 报告 -> 2026报告); or select files and pick Rename… from the menu for the full window"
       },
       "icon": "glyph:U+E8AC",
-      "hint": {"zh": "先选中文件", "en": "select files first"},
+      "hint": {"zh": "模式 [-> 替换]，或选中文件用", "en": "pattern [-> replace], or select files"},
       "triggers": [{"files": {"kind": "any", "max": 1000, "title": {"zh": "重命名…", "en": "Rename…"}}}]
     }
   ]

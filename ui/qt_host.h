@@ -27,6 +27,10 @@ bool Start(int argc, char** argv, const std::wstring& dataDir, std::string& erro
 // protocol thread may call it.
 void Show(const std::vector<std::wstring>& paths, bool recursive);
 
+// Shows the window for "work in this folder": the folder's direct children are
+// the rows. Same window, same presenter, same executor.
+void ShowFolder(const std::wstring& folder, bool recursive);
+
 // The host's look (docs/plugins.md, 外观): `nativeLookJson` is the compact JSON
 // of `appearance.nativeLook`, empty when the host sent none. Marshalled to the
 // GUI thread like Show().

@@ -35,6 +35,11 @@ struct EnumerateRequest {
     std::vector<std::wstring> roots;   // from the host's `files` array
     bool recursive = false;            // RN-FR-14, off by default
     bool followLinks = false;          // always false in release one
+    // A root that is a folder contributes its *direct children* instead of
+    // itself. This is what "open the rename window in this folder" means: the
+    // folder is the place to work in, not one row to rename. Never recursive on
+    // its own — `recursive` still governs whether those children are walked.
+    bool listContents = false;
 };
 
 struct EnumerateResult {

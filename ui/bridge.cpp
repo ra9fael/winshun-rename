@@ -166,6 +166,11 @@ void Bridge::setBuffer(const QString& text)
 
 QString Bridge::blockingReason() const
 {
+    // A finished batch is not a blocked one: once the run reported what it did,
+    // the footer must not also claim there are no files.
+    if (!m_doneLine.isEmpty())
+        return QString();
+
     // The presenter reports why, as a stable identifier; this maps it to the
     // user's language. The counts themselves are separate properties, so the
     // wording can include them without the presenter knowing any language.
@@ -192,6 +197,38 @@ int Bridge::unchangedCount() const { return m_presenter.CurrentCounts().unchange
 int Bridge::errorCount() const { return m_presenter.CurrentCounts().errors; }
 bool Bridge::canExecute() const { return m_presenter.CanExecute(); }
 int Bridge::visibleCount() const { return static_cast<int>(m_presenter.VisibleRows().size()); }
+int Bridge::totalCount() const { return static_cast<int>(m_presenter.Items().size()); }
+
+bool Bridge::allSelected() const
+{
+    // The header box is ticked only when every row is: a partial selection has to
+    // read as partial, or one click would silently drop rows the user kept.
+    const std::vector<rename_ui::Row> rows = m_presenter.VisibleRows();
+    if (rows.empty())
+        return false;
+    for (const rename_ui::Row& row : rows)
+    {
+        if (!row.selected)
+            return false;
+    }
+    return true;
+}
+
+bool Bridge::ruleRegexInvalid() const
+{
+    // "Regex" is on and the pattern does not compile: the field turns red before
+    // the user presses anything, which is the only useful time to say so. A bad
+    // pattern surfaces as a bad-rule row, so the plan is what to ask.
+    if (m_ruleMatch != 1 || m_ruleFind.isEmpty())
+        return false;
+    for (const rename_core::PlanItem& item : m_presenter.Plan().items)
+    {
+        if (item.status == rename_core::Status::ErrorBadRule)
+            return true;
+    }
+    return false;
+}
+
 QAbstractListModel* Bridge::previewModel() { return &m_previewModel; }
 
 void Bridge::setSelection(const QStringList& paths, bool recursive)
@@ -219,6 +256,43 @@ void Bridge::setSelection(const QStringList& paths, bool recursive)
     }
 
     m_presenter.SetItems(std::move(items));
+    PublishRows();
+    emit changed();
+    emit countsChanged();
+}
+
+void Bridge::setFolder(const QString& folder, bool recursive)
+{
+    // `listContents`: the folder is the place to work in, so its direct children
+    // are the input set. Same presenter, same plan, same executor as a selection
+    // — "here is a folder" and "here are these files" only differ in where the
+    // rows come from.
+    rename_win::EnumerateRequest request;
+    request.recursive = recursive;
+    request.listContents = true;
+    request.roots.push_back(FromQt(folder));
+
+    const rename_win::EnumerateResult collected = rename_win::Enumerate(request);
+    m_collected = collected.items;
+
+    std::vector<rename_core::ItemSnapshot> items;
+    items.reserve(collected.items.size());
+    for (const rename_win::CollectedItem& entry : collected.items)
+    {
+        rename_core::ItemSnapshot snapshot;
+        snapshot.id = entry.id;
+        snapshot.leaf = entry.leaf;
+        snapshot.isFolder = entry.isFolder;
+        snapshot.depth = entry.depth;
+        snapshot.pathLength = entry.pathLength;
+        snapshot.templateContext = rename_win::BuildTemplateContext(entry, 0);
+        items.push_back(std::move(snapshot));
+    }
+
+    m_presenter.SetItems(std::move(items));
+    m_folder = folder;
+    if (collected.blocked)
+        m_doneLine = ToQt(collected.blockReason);
     PublishRows();
     emit changed();
     emit countsChanged();
@@ -286,9 +360,52 @@ void Bridge::selectAll(bool selected)
     emit changed();
 }
 
-void Bridge::setSingleRule(int scope, int match, const QString& find,
-                           const QString& replace, bool enabled)
+void Bridge::setCaseTransform(int which)
 {
+    // A case transform is a batch-level flag in the core, not a rule: it applies
+    // to whatever the rules produced. `which` is the chip pressed, and pressing
+    // the same chip again turns it off, which is what a toggle should do.
+    const std::uint32_t all = rename_core::FlagUppercase | rename_core::FlagLowercase
+                            | rename_core::FlagTitleCase | rename_core::FlagCapitalize;
+
+    rename_ui::ControlState state = m_presenter.ControlStateRef();
+    const std::uint32_t previous = state.flags & all;
+    state.flags &= ~all;
+
+    std::uint32_t wanted = 0;
+    switch (which)
+    {
+    case 1: wanted = rename_core::FlagLowercase; break;
+    case 2: wanted = rename_core::FlagUppercase; break;
+    case 3: wanted = rename_core::FlagCapitalize; break;
+    case 4: wanted = rename_core::FlagTitleCase; break;
+    default: break;
+    }
+    if (wanted != 0 && previous != wanted)
+        state.flags |= wanted;
+
+    m_caseTransform = (wanted != 0 && previous != wanted)
+        ? which
+        : 0;
+
+    m_presenter.SetControlState(std::move(state));
+    PublishRows();
+    emit ruleChanged();
+    emit changed();
+    emit countsChanged();
+}
+
+void Bridge::setRule(int scope, int match, const QString& find, const QString& replace,
+                     bool enabled, bool matchAll, bool caseSensitive)
+{
+    m_ruleScope = scope;
+    m_ruleMatch = match;
+    m_ruleFind = find;
+    m_ruleReplace = replace;
+    m_ruleEnabled = enabled;
+    m_ruleMatchAll = matchAll;
+    m_ruleCaseSensitive = caseSensitive;
+
     rename_ui::ControlState state = m_presenter.ControlStateRef();
     state.chain.rules.clear();
 
@@ -297,18 +414,43 @@ void Bridge::setSingleRule(int scope, int match, const QString& find,
     rule.scope = (scope == 1) ? rename_core::Scope::Extension
                               : (scope == 2 ? rename_core::Scope::Full : rename_core::Scope::Name);
     rule.match = (match == 1) ? rename_core::MatchType::Regex : rename_core::MatchType::Literal;
-    // The UI's "first / all" control does not exist yet, so a rule replaces every
-    // match; that is what a user expects from a find-and-replace box.
-    rule.occurrence = rename_core::Occurrence::All;
+    rule.occurrence = matchAll ? rename_core::Occurrence::All : rename_core::Occurrence::First;
     rule.search = FromQt(find);
     rule.replace = FromQt(replace);
+    // An empty find is "no rule", not "match everything": the latter would make
+    // a half-typed query rewrite every name.
     if (enabled && !rule.search.empty())
         state.chain.rules.push_back(std::move(rule));
 
+    // Case sensitivity is a flag on the whole batch, as PowerRename's checkbox is
+    // (not per rule): one batch compares names one way.
+    if (caseSensitive)
+        state.flags |= rename_core::FlagCaseSensitive;
+    else
+        state.flags &= ~static_cast<std::uint32_t>(rename_core::FlagCaseSensitive);
+
     m_presenter.SetControlState(std::move(state));
     PublishRows();
+    emit ruleChanged();
     emit changed();
     emit countsChanged();
+}
+
+void Bridge::setScope(int scope)
+{
+    if (scope == m_ruleScope)
+        return;
+    m_ruleScope = scope;
+    // Reapply with the text the fields hold: the three buttons only change where
+    // the rule looks, never what it looks for.
+    setRule(m_ruleScope, m_ruleMatch, m_ruleFind, m_ruleReplace, m_ruleEnabled,
+            m_ruleMatchAll, m_ruleCaseSensitive);
+}
+
+void Bridge::setSingleRule(int scope, int match, const QString& find,
+                           const QString& replace, bool enabled)
+{
+    setRule(scope, match, find, replace, enabled, /*matchAll=*/true, /*caseSensitive=*/false);
 }
 
 bool Bridge::apply()

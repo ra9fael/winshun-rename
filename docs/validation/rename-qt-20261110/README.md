@@ -81,3 +81,43 @@ IFileOperation 全部成功，Shell 撤销栈可用（FOF_ALLOWUNDO + FOFX_ADDUN
 ## 下一步
 
 装进宿主（设置 → 插件 → 从压缩包安装 → 选 `dist\ra9fael.rename-0.1.0.wsplugin`），选中文件 → 右键"重命名…"，看 plugins.log 里 P1 探针行与窗口是否同时出现。
+
+## 追加（2026-11-11 01:25）：宿主里"一直在崩溃"的根因与修复
+
+现象：装进宿主后 plugins.log 反复出现 initialize 没有回应 → 挂死后重启。
+
+根因（实测）：窗口在 main() 里、serve() 之前同步构建——QGuiApplication + QQmlEngine + 加载 Main.qml 在本机要 **1600–1850 ms**，超过清单的 	imeoutMs: 1500，宿主在插件回答 initialize 前就判挂死。手动复刻宿主环境（Job 内存限制、宿主 Qt 环境变量、完整 initialize 参数）测得 initialize 回应 1650 ms；拆分后确认耗时全部在 QML 场景构建。
+
+修复：Start() 只建 QGuiApplication（毫秒级），QML 引擎与场景延迟到第一次 iles 触发的 Show() 里建（packages 插件同款懒加载）。实测 initialize 回应降到 **66–261 ms**，窗口链路（触发 → 建场景 → 显示 → 预览）复测通过（grab-lazy.png）。
+
+部署：新 rename.exe 已覆盖到 %LOCALAPPDATA%\WinShun\plugins\ra9fael.rename\，包 dist\ra9fael.rename-0.1.0.wsplugin 同步重打（sha256 d039fc3a…bd3a2c）。
+
+教训：常驻插件的 initialize 回应预算是 	imeoutMs，任何重资产（QML 引擎、窗口、缓存）都必须在回答之后、第一次用到时再建。
+
+## 追加（2026-11-11 02:35）：交互重做——关键字即预览
+
+用户反馈：ename 只回一行提示、真入口藏在文件右键菜单里，交互太绕。
+
+新交互（三入口，全部实测）：
+1. **ename <查找> -> <替换>**：query 里直接调宿主 search_files 工具（新加 winshun:search 权限），把匹配文件逐行列出（原名 → 新名），第一行是"重命名 N 项"，Enter 执行整批。协议级实测：ename report -> 2026_ 对 3 个文件返回 3 行预览 + batch 数据，action 落盘成功（2026_1..3.docx）。
+2. **ename 单独输入**：回用法行（含示例）。
+3. **文件右键菜单 → 重命名…**：保留，开完整窗口（双模式）。
+
+实现要点：pattern 解析支持 -> 与 →、两侧空格与全角空格；规则走与窗口同一个 Presenter/Plan；batch 数据随行 data 回传，action 端重新执行（磁盘是唯一真相）。只给查找不给替换时行标"不变"，不猜删除。
+
+包重打：sha256 1f243e49…53ea79（206,180 字节），已同步部署到已安装位置。
+
+## 追加（2026-11-11 02:52）：结果列表交互定稿（用户反馈第二轮）
+
+用户看第一版截图：每行有'重命名'按钮但 Enter 是全部执行，title 只显原名看不出变化——语义混乱。
+
+查宿主源码定边界：插件行的 title 由宿主按搜索词生成高亮（ResultModel NameHtmlRole），插件只能给纯文本；subtitle 恒为纯文本。方案 A 的红/绿行内 diff 在宿主行里画不出来。
+
+定稿（已实现并协议实测）：
+- title = 新名字（ready 时）/ 原名（其余），宿主自动高亮输入词
+- subtitle = '← 原名'（方向： became from）；不变时'不变 · 没有替换词'；冲突/超长等逐状态说明
+- 批执行行是唯一带蓝色标签的行：ready>0 时'重命名 N 项 / Enter 执行全部 N 项 · 可在资源管理器撤消'；ready=0 时'没有要改的名字 / 补上替换词：rename X -> 新名字'
+- 无替换词时不建规则（空 replace 会把查找词删掉，违背直觉）——行标不变，提示补替换词
+- 去掉每行按钮；文件行不带任何动作
+
+三场景协议实测：带替换（含冲突行）、无替换（全不变+提示）、裸 rename（用法行）。ctest 3/3。包 sha256 63119ab3…c6d49；已装位置被运行中的宿主占用，等宿主重载插件后生效。
