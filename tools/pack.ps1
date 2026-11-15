@@ -15,6 +15,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+if (-not [System.IO.Path]::IsPathRooted($OutDir)) {
+    $OutDir = Join-Path $root $OutDir
+}
 
 $exe = Join-Path $root "rename.exe"
 if (-not (Test-Path $exe)) {
@@ -28,11 +31,6 @@ $version = $manifest.version
 $stage = Join-Path $env:TEMP ("wsplugin-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-    Copy-Item $exe (Join-Path $stage "rename.exe")
-    Copy-Item (Join-Path $root "package\plugin.json") (Join-Path $stage "plugin.json")
-
-    # The exe must be the Qt build when the manifest declares runtime.qt: host;
-    # a headless exe would start and then never show a window.
     $imports = & {
         $dumpbin = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
@@ -42,8 +40,23 @@ try {
         Write-Error "plugin.json declares runtime.qt: host but rename.exe does not import Qt6Core.dll; build with -DRENAME_BUILD_QT=ON"
     }
 
+    Copy-Item $exe (Join-Path $stage "rename.exe")
+    Copy-Item (Join-Path $root "package\plugin.json") (Join-Path $stage "plugin.json")
+
+    # Qt Widgets is not in WinShun's shared-Qt contract yet. Until it is, the
+    # plugin must carry the one extra DLL beside its exe; Windows finds it there
+    # before the host's Qt directory. Same Qt version as the host, per the
+    # contract's rule against mixing another Qt build.
+    $widgets = Join-Path $root "Qt6Widgets.dll"
+    if ($imports -match "Qt6Widgets\.dll") {
+        if (-not (Test-Path $widgets)) {
+            Write-Error "rename.exe imports Qt6Widgets.dll; copy Qt6Widgets.dll next to rename.exe before packing"
+        }
+        Copy-Item $widgets (Join-Path $stage "Qt6Widgets.dll")
+    }
+
     New-Item -ItemType Directory -Path $OutDir -Force | Out-Null | Out-Null
-    $zip = Join-Path $root "$OutDir\$id-$version.wsplugin"
+    $zip = Join-Path $OutDir "$id-$version.wsplugin"
     if (Test-Path $zip) { Remove-Item $zip -Force }
     Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 

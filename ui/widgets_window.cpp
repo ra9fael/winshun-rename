@@ -1,0 +1,969 @@
+#include "ui/widgets_window.h"
+
+#include "ui/bridge.h"
+#include "ui/widgets_theme.h"
+
+#include <QAbstractButton>
+#include <QApplication>
+#include <QCheckBox>
+#include <QCloseEvent>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QFontMetrics>
+#include <QFontMetricsF>
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMessageBox>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPlainTextEdit>
+#include <QPixmap>
+#include <QStyledItemDelegate>
+#include <QPushButton>
+#include <QScreen>
+#include <QScrollBar>
+#include <QShortcut>
+#include <QStyle>
+#include <QStackedWidget>
+#include <QTableView>
+#include <QTimer>
+#include <QToolButton>
+#include <QVBoxLayout>
+
+#include <cstdio>
+
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#endif
+
+namespace rename_widgets {
+
+namespace {
+
+QFrame* Divider(Qt::Orientation orientation, QWidget* parent)
+{
+    auto* line = new QFrame(parent);
+    line->setFrameShape(orientation == Qt::Horizontal ? QFrame::HLine : QFrame::VLine);
+    line->setFrameShadow(QFrame::Plain);
+    line->setLineWidth(1);
+    return line;
+}
+
+QString StatusTitle(rename_core::Status status, const QString& target, bool zh)
+{
+    switch (status)
+    {
+    case rename_core::Status::ErrorAlreadyExists:
+        return zh ? QStringLiteral("目标已存在：") + target
+                  : QStringLiteral("target exists: ") + target;
+    case rename_core::Status::ErrorTooLong:
+        return zh ? QStringLiteral("名字过长") : QStringLiteral("too long");
+    case rename_core::Status::ErrorInvalidCharacter:
+        return zh ? QStringLiteral("含非法字符") : QStringLiteral("invalid char");
+    case rename_core::Status::ErrorEmptyName:
+        return zh ? QStringLiteral("空名字") : QStringLiteral("empty name");
+    case rename_core::Status::ErrorBadRule:
+        return zh ? QStringLiteral("规则错误") : QStringLiteral("bad rule");
+    default:
+        return target;
+    }
+}
+
+bool IsError(rename_core::Status status)
+{
+    switch (status)
+    {
+    case rename_core::Status::ErrorAlreadyExists:
+    case rename_core::Status::ErrorTooLong:
+    case rename_core::Status::ErrorInvalidCharacter:
+    case rename_core::Status::ErrorEmptyName:
+    case rename_core::Status::ErrorBadRule:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void ApplyDarkTitleBar(QWidget* widget, bool dark)
+{
+#ifdef Q_OS_WIN
+    if (!widget)
+        return;
+    const HWND hwnd = reinterpret_cast<HWND>(widget->winId());
+    BOOL value = dark ? TRUE : FALSE;
+    // DWMWA_USE_IMMERSIVE_DARK_MODE; 20 is the documented numeric value and is
+    // also available through the SDK enum on current Windows 11 headers.
+    ::DwmSetWindowAttribute(hwnd, 20, &value, sizeof(value));
+#else
+    Q_UNUSED(widget);
+    Q_UNUSED(dark);
+#endif
+}
+
+void PaintCheck(QPainter& painter, const QRect& box, bool checked, bool hovered,
+                const Theme& theme, bool enabled)
+{
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QRectF rect = QRectF(box).adjusted(0.5, 0.5, -0.5, -0.5);
+    const QColor fill = checked ? theme.accentFill : theme.control;
+    const QColor border = enabled ? (hovered ? theme.text : theme.controlBorder) : theme.faint;
+    painter.setPen(QPen(checked ? theme.accentFill : border, 1.0));
+    painter.setBrush(fill);
+    painter.drawRoundedRect(rect, theme.smallControlRadius, theme.smallControlRadius);
+
+    if (checked)
+    {
+        QPen mark(theme.accentText);
+        mark.setWidthF(1.8);
+        mark.setCapStyle(Qt::RoundCap);
+        mark.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(mark);
+        QPainterPath path;
+        path.moveTo(rect.left() + 4.0, rect.center().y());
+        path.lineTo(rect.left() + 6.8, rect.bottom() - 4.0);
+        path.lineTo(rect.right() - 3.5, rect.top() + 4.0);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+    }
+}
+
+// The QSS-styled QCheckBox loses its indicator on Fusion; drawing the 16 px
+// box here keeps it visible in every theme and at every UI size.
+class CheckBox : public QCheckBox
+{
+public:
+    explicit CheckBox(const Theme* theme, QWidget* parent = nullptr)
+        : QCheckBox(parent)
+        , m_theme(theme)
+    {
+        setCursor(Qt::PointingHandCursor);
+    }
+
+    QSize sizeHint() const override
+    {
+        QSize size = QCheckBox::sizeHint();
+        size.setHeight(qMax(size.height(), 22));
+        return size;
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        if (!m_theme)
+            return;
+
+        QPainter painter(this);
+        const bool hasText = !text().isEmpty();
+        const int boxSize = 16;
+        const int spacing = 8;
+        QRect box(0, (height() - boxSize) / 2, boxSize, boxSize);
+        if (!hasText)
+            box.moveLeft((width() - boxSize) / 2);
+
+        PaintCheck(painter, box, isChecked(), underMouse(), *m_theme, isEnabled());
+
+        if (hasText)
+        {
+            painter.setPen(isEnabled() ? m_theme->text : m_theme->faint);
+            painter.setFont(font());
+            const QRect label(box.right() + spacing, 0, width() - box.right() - spacing, height());
+            painter.drawText(label, Qt::AlignVCenter | Qt::AlignLeft, text());
+        }
+        if (hasFocus())
+        {
+            QStyleOptionFocusRect focus;
+            focus.rect = rect().adjusted(0, 0, -1, -1);
+            focus.state = QStyle::State_KeyboardFocusChange;
+            style()->drawPrimitive(QStyle::PE_FrameFocusRect, &focus, &painter, this);
+        }
+    }
+
+private:
+    const Theme* m_theme = nullptr;
+};
+
+// QSS can style a combo's box but not draw its arrow on every Windows version
+// once Fusion + a stylesheet are combined. A few lines here keep the chevron
+// visible and on-theme.
+class ComboBox : public QComboBox
+{
+public:
+    explicit ComboBox(const Theme* theme, QWidget* parent = nullptr)
+        : QComboBox(parent)
+        , m_theme(theme)
+    {
+        setCursor(Qt::PointingHandCursor);
+        setMinimumHeight(32);
+    }
+
+    QSize sizeHint() const override
+    {
+        QSize size = QComboBox::sizeHint();
+        size.setHeight(qMax(size.height(), 32));
+        return size;
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        if (!m_theme)
+            return;
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        const bool active = hasFocus();
+        const QColor border = active ? m_theme->accent : m_theme->controlBorder;
+        painter.setPen(QPen(border, 1.0));
+        painter.setBrush(active ? m_theme->inputFocused : m_theme->control);
+        painter.drawRoundedRect(box, m_theme->controlRadius, m_theme->controlRadius);
+
+        const QRect textRect = rect().adjusted(8, 0, -28, 0);
+        painter.setPen(m_theme->text);
+        painter.setFont(font());
+        const QString shown = fontMetrics().elidedText(currentText(), Qt::ElideRight, textRect.width());
+        painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, shown);
+
+        const int cx = width() - 15;
+        const int cy = height() / 2 - 1;
+        QPen arrow(m_theme->subtext);
+        arrow.setWidthF(1.4);
+        arrow.setCapStyle(Qt::RoundCap);
+        painter.setPen(arrow);
+        painter.drawLine(cx - 4, cy - 2, cx, cy + 2);
+        painter.drawLine(cx, cy + 2, cx + 4, cy - 2);
+    }
+
+private:
+    const Theme* m_theme = nullptr;
+};
+
+class CheckDelegate : public QStyledItemDelegate
+{
+public:
+    explicit CheckDelegate(const Theme* theme, QObject* parent = nullptr)
+        : QStyledItemDelegate(parent)
+        , m_theme(theme)
+    {
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        if (!m_theme)
+            return;
+
+        painter->save();
+        if (option.state & (QStyle::State_Selected | QStyle::State_MouseOver))
+            painter->fillRect(option.rect, m_theme->hover);
+
+        const bool checked = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
+        QRect box(0, 0, 16, 16);
+        box.moveCenter(option.rect.center());
+        PaintCheck(*painter, box, checked, option.state & QStyle::State_MouseOver,
+                   *m_theme, option.state & QStyle::State_Enabled);
+        painter->restore();
+    }
+
+private:
+    const Theme* m_theme = nullptr;
+};
+
+} // namespace
+
+Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
+    : QWidget(parent)
+    , m_bridge(bridge)
+{
+    setWindowTitle(T("重命名", "Rename"));
+    setMinimumSize(700, 520);
+    resize(822, 616);
+    setAttribute(Qt::WA_DeleteOnClose, false);
+    setWindowFlag(Qt::WindowContextHelpButtonHint, false);
+
+    m_theme = new Theme(Theme::From(m_bridge->look(), m_bridge->dark(), m_bridge->uiSize()));
+
+    BuildUi();
+    ConnectBridge();
+    ApplyAppearance();
+    RefreshAll();
+}
+
+Window::~Window()
+{
+    delete m_theme;
+}
+
+void Window::BuildUi()
+{
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+
+    // ---- title strip ------------------------------------------------------
+    auto* top = new QWidget(this);
+    top->setFixedHeight(38);
+    top->setObjectName(QStringLiteral("topBar"));
+    auto* topLayout = new QHBoxLayout(top);
+    topLayout->setContentsMargins(12, 0, 8, 0);
+    topLayout->setSpacing(8);
+
+    auto* titleIcon = new QLabel(QStringLiteral("✎"), top);
+    titleIcon->setObjectName(QStringLiteral("caption"));
+    auto* title = new QLabel(T("重命名", "Rename"), top);
+    title->setObjectName(QStringLiteral("topTitle"));
+    topLayout->addWidget(titleIcon);
+    topLayout->addWidget(title);
+    topLayout->addStretch(1);
+
+    const auto makeModeButton = [this, top](const QString& text, const QString& target) {
+        auto* button = new QToolButton(top);
+        button->setText(text);
+        button->setCheckable(true);
+        button->setAutoExclusive(true);
+        button->setObjectName(QStringLiteral("modeButton"));
+        button->setCursor(Qt::PointingHandCursor);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        button->setFixedHeight(24);
+        connect(button, &QToolButton::clicked, this, [this, target] { RequestMode(target); });
+        return button;
+    };
+    m_modeRules = makeModeButton(T("规则", "Rules"), QStringLiteral("control"));
+    m_modeText = makeModeButton(T("文本", "Text"), QStringLiteral("text"));
+    topLayout->addWidget(m_modeRules);
+    topLayout->addWidget(m_modeText);
+
+    root->addWidget(top);
+    root->addWidget(Divider(Qt::Horizontal, this));
+
+    // ---- body -------------------------------------------------------------
+    auto* body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(0);
+    root->addLayout(body, 1);
+
+    // Left: rule form / text editor.
+    auto* left = new QWidget(this);
+    left->setFixedWidth(348);
+    auto* leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(16, 14, 16, 13);
+    leftLayout->setSpacing(0);
+
+    m_leftStack = new QStackedWidget(left);
+    leftLayout->addWidget(m_leftStack, 1);
+
+    auto* controlPage = new QWidget(m_leftStack);
+    auto* control = new QVBoxLayout(controlPage);
+    control->setContentsMargins(0, 0, 0, 0);
+    control->setSpacing(0);
+
+    m_find = new QLineEdit(controlPage);
+    m_find->setPlaceholderText(T("查找", "Find"));
+    m_find->setClearButtonEnabled(true);
+    control->addWidget(m_find);
+    control->addSpacing(9);
+
+    m_regex = new CheckBox(m_theme, controlPage);
+    m_regex->setText(T("使用正则表达式", "Use regular expressions"));
+    m_matchAll = new CheckBox(m_theme, controlPage);
+    m_matchAll->setText(T("替换全部匹配", "Match all occurrences"));
+    m_caseSensitive = new CheckBox(m_theme, controlPage);
+    m_caseSensitive->setText(T("区分大小写", "Case sensitive"));
+    control->addWidget(m_regex);
+    control->addSpacing(7);
+    control->addWidget(m_matchAll);
+    control->addSpacing(7);
+    control->addWidget(m_caseSensitive);
+
+    control->addSpacing(14);
+    control->addWidget(Divider(Qt::Horizontal, controlPage));
+    control->addSpacing(14);
+
+    m_replace = new QLineEdit(controlPage);
+    m_replace->setPlaceholderText(T("替换为", "Replace with"));
+    control->addWidget(m_replace);
+
+    auto* scopeLabel = new QLabel(T("应用于", "Apply to"), controlPage);
+    scopeLabel->setObjectName(QStringLiteral("caption"));
+    control->addSpacing(14);
+    control->addWidget(scopeLabel);
+    control->addSpacing(5);
+
+    m_scope = new ComboBox(m_theme, controlPage);
+    m_scope->addItem(T("文件名", "Name"));
+    m_scope->addItem(T("仅扩展名", "Extension only"));
+    m_scope->addItem(T("完整名称", "Full name"));
+    control->addWidget(m_scope);
+
+    auto* formatLabel = new QLabel(T("文本格式", "Text formatting"), controlPage);
+    formatLabel->setObjectName(QStringLiteral("caption"));
+    control->addSpacing(14);
+    control->addWidget(formatLabel);
+    control->addSpacing(5);
+
+    auto* caseRow = new QHBoxLayout;
+    caseRow->setContentsMargins(0, 0, 0, 0);
+    caseRow->setSpacing(6);
+    const char* caseTexts[4] = {"aa", "AA", "Aa", "Aa Aa"};
+    const char* caseTips[4] = {"全部小写", "全部大写", "首字母大写", "每词首字母大写"};
+    const char* caseTipsEn[4] = {"lowercase", "UPPERCASE", "Capitalize", "Title Case"};
+    for (int i = 0; i < 4; ++i)
+    {
+        auto* button = new QToolButton(controlPage);
+        button->setText(QString::fromLatin1(caseTexts[i]));
+        button->setCheckable(true);
+        button->setObjectName(QStringLiteral("chipButton"));
+        button->setToolTip(T(caseTips[i], caseTipsEn[i]));
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFixedHeight(30);
+        connect(button, &QToolButton::clicked, this, [this, i] { m_bridge->setCaseTransform(i + 1); });
+        m_caseButtons[i] = button;
+        caseRow->addWidget(button);
+    }
+    caseRow->addStretch(1);
+    control->addLayout(caseRow);
+    control->addStretch(1);
+
+    m_leftStack->addWidget(controlPage);
+
+    auto* textPage = new QWidget(m_leftStack);
+    auto* textLayout = new QVBoxLayout(textPage);
+    textLayout->setContentsMargins(0, 0, 0, 0);
+    textLayout->setSpacing(0);
+
+    auto* textHint = new QLabel(
+        T("每行一项：/<编号> 新名字；文件夹以 / 结尾。Ctrl+S 执行。",
+          "One item per line: /<id> new name; folders end with /. Ctrl+S runs it."),
+        textPage);
+    textHint->setObjectName(QStringLiteral("caption"));
+    textHint->setWordWrap(true);
+    textLayout->addWidget(textHint);
+    textLayout->addSpacing(8);
+
+    m_text = new QPlainTextEdit(textPage);
+    m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
+    QFont mono(QStringLiteral("Cascadia Mono"));
+    mono.setStyleHint(QFont::Monospace);
+    mono.setPixelSize(m_theme->fontBody);
+    m_text->setFont(mono);
+    m_text->setTabStopDistance(4 * QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' ')));
+    textLayout->addWidget(m_text, 1);
+    m_leftStack->addWidget(textPage);
+
+    // The one verb, shared by both modes.
+    auto* bottom = new QWidget(left);
+    auto* bottomLayout = new QHBoxLayout(bottom);
+    bottomLayout->setContentsMargins(0, 10, 0, 0);
+    bottomLayout->setSpacing(8);
+    bottomLayout->addStretch(1);
+    m_apply = new QPushButton(T("重命名", "Rename"), bottom);
+    m_apply->setObjectName(QStringLiteral("primary"));
+    m_apply->setCursor(Qt::PointingHandCursor);
+    m_apply->setMinimumWidth(152);
+    m_apply->setMinimumHeight(33);
+    bottomLayout->addWidget(m_apply);
+    leftLayout->addWidget(bottom);
+
+    body->addWidget(left);
+    body->addWidget(Divider(Qt::Vertical, this));
+
+    // Right: table.
+    auto* right = new QWidget(this);
+    auto* rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+
+    auto* header = new QWidget(right);
+    header->setFixedHeight(33);
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(13, 0, 12, 0);
+    headerLayout->setSpacing(0);
+
+    m_selectAll = new CheckBox(m_theme, header);
+    m_selectAll->setFixedWidth(24);
+    m_selectAll->setToolTip(T("全选", "Select all"));
+    headerLayout->addWidget(m_selectAll);
+
+    m_originalHeader = new QLabel(header);
+    m_originalHeader->setObjectName(QStringLiteral("caption"));
+    m_originalHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    headerLayout->addWidget(m_originalHeader, 1);
+
+    m_targetHeader = new QLabel(header);
+    m_targetHeader->setObjectName(QStringLiteral("caption"));
+    m_targetHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    headerLayout->addWidget(m_targetHeader, 1);
+
+    m_filter = new ComboBox(m_theme, header);
+    m_filter->addItem(T("全部", "All"));
+    m_filter->addItem(T("已选", "Selected"));
+    m_filter->addItem(T("可改", "Applicable"));
+    m_filter->addItem(T("要改", "To rename"));
+    m_filter->setFixedWidth(108);
+    m_filter->setToolTip(T("筛选显示的条目，不改变要执行的集合", "Filter the rows shown; the batch itself is unchanged"));
+    headerLayout->addSpacing(6);
+    headerLayout->addWidget(m_filter);
+    rightLayout->addWidget(header);
+    rightLayout->addWidget(Divider(Qt::Horizontal, right));
+
+    m_tableStack = new QStackedWidget(right);
+    m_table = new QTableView(m_tableStack);
+    m_table->setModel(m_bridge->previewModel());
+    m_table->setShowGrid(false);
+    m_table->setWordWrap(false);
+    m_table->setTextElideMode(Qt::ElideMiddle);
+    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_table->setAlternatingRowColors(false);
+    m_table->setFocusPolicy(Qt::StrongFocus);
+    m_table->horizontalHeader()->hide();
+    m_table->verticalHeader()->hide();
+    m_table->verticalHeader()->setDefaultSectionSize(m_theme->rowHeight);
+    m_table->setColumnWidth(0, 34);
+    m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_table->setItemDelegateForColumn(0, new CheckDelegate(m_theme, m_table));
+    m_tableStack->addWidget(m_table);
+
+    m_empty = new QLabel(m_tableStack);
+    m_empty->setObjectName(QStringLiteral("empty"));
+    m_empty->setAlignment(Qt::AlignCenter);
+    m_empty->setWordWrap(true);
+    m_tableStack->addWidget(m_empty);
+    rightLayout->addWidget(m_tableStack, 1);
+
+    auto* footer = new QWidget(right);
+    footer->setFixedHeight(30);
+    auto* footerLayout = new QHBoxLayout(footer);
+    footerLayout->setContentsMargins(14, 0, 14, 0);
+    footerLayout->setSpacing(8);
+
+    m_dot = new QLabel(footer);
+    m_dot->setFixedSize(8, 8);
+    footerLayout->addWidget(m_dot);
+
+    m_status = new QLabel(footer);
+    m_status->setObjectName(QStringLiteral("caption"));
+    footerLayout->addWidget(m_status);
+    footerLayout->addStretch(1);
+
+    m_hint = new QLabel(footer);
+    m_hint->setObjectName(QStringLiteral("caption"));
+    m_hint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    footerLayout->addWidget(m_hint, 1);
+    rightLayout->addWidget(footer);
+
+    body->addWidget(right, 1);
+
+    // ---- input and shortcuts ---------------------------------------------
+    connect(m_apply, &QPushButton::clicked, this, &Window::ConfirmAndApply);
+    connect(m_selectAll, &QCheckBox::toggled, this, [this](bool checked) {
+        if (!m_syncing)
+            m_bridge->selectAll(checked);
+    });
+
+    auto* enter = new QShortcut(QKeySequence(Qt::Key_Return), this);
+    enter->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(enter, &QShortcut::activated, this, [this] {
+        QWidget* focus = QApplication::focusWidget();
+        if (qobject_cast<QLineEdit*>(focus) || qobject_cast<QPlainTextEdit*>(focus)
+            || qobject_cast<QComboBox*>(focus))
+            return;
+        ConfirmAndApply();
+    });
+
+    auto* ctrlS = new QShortcut(QKeySequence(QStringLiteral("Ctrl+S")), this);
+    ctrlS->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(ctrlS, &QShortcut::activated, this, &Window::ConfirmAndApply);
+
+    auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    escape->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(escape, &QShortcut::activated, this, [this] { close(); });
+}
+
+void Window::ConnectBridge()
+{
+    connect(m_bridge, &rename_qml::Bridge::changed, this, &Window::RefreshAll);
+    connect(m_bridge, &rename_qml::Bridge::countsChanged, this, &Window::RefreshCounts);
+    connect(m_bridge, &rename_qml::Bridge::ruleChanged, this, &Window::SyncRuleFields);
+    connect(m_bridge, &rename_qml::Bridge::appearanceChanged, this, &Window::ApplyAppearance);
+
+    m_ruleTimer = new QTimer(this);
+    m_ruleTimer->setSingleShot(true);
+    m_ruleTimer->setInterval(140);
+    connect(m_ruleTimer, &QTimer::timeout, this, &Window::PushRule);
+
+    m_textTimer = new QTimer(this);
+    m_textTimer->setSingleShot(true);
+    m_textTimer->setInterval(120);
+    connect(m_textTimer, &QTimer::timeout, this, [this] {
+        if (!m_syncing)
+            m_bridge->setBuffer(m_text->toPlainText());
+    });
+
+    connect(m_find, &QLineEdit::textChanged, this, [this] {
+        if (!m_syncing)
+            m_ruleTimer->start();
+    });
+    connect(m_replace, &QLineEdit::textChanged, this, [this] {
+        if (!m_syncing)
+            m_ruleTimer->start();
+    });
+    connect(m_find, &QLineEdit::returnPressed, this, [this] {
+        m_ruleTimer->stop();
+        PushRule();
+    });
+    connect(m_replace, &QLineEdit::returnPressed, this, [this] {
+        m_ruleTimer->stop();
+        PushRule();
+    });
+
+    connect(m_regex, &QCheckBox::toggled, this, [this] { if (!m_syncing) PushRule(); });
+    connect(m_matchAll, &QCheckBox::toggled, this, [this] { if (!m_syncing) PushRule(); });
+    connect(m_caseSensitive, &QCheckBox::toggled, this, [this] { if (!m_syncing) PushRule(); });
+    connect(m_scope, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (!m_syncing)
+            m_bridge->setScope(index);
+    });
+    connect(m_filter, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (m_syncing)
+            return;
+        switch (index)
+        {
+        case 1: m_bridge->setFilter(QStringLiteral("selected")); break;
+        case 2: m_bridge->setFilter(QStringLiteral("applicable")); break;
+        case 3: m_bridge->setFilter(QStringLiteral("to-rename")); break;
+        default: m_bridge->setFilter(QStringLiteral("all")); break;
+        }
+    });
+
+    connect(m_text, &QPlainTextEdit::textChanged, this, [this] {
+        if (!m_syncing)
+            m_textTimer->start();
+    });
+}
+
+QString Window::T(const char* zhText, const char* enText) const
+{
+    return QString::fromUtf8(zh() ? zhText : enText);
+}
+
+bool Window::zh() const
+{
+    return m_bridge && m_bridge->locale().startsWith(QLatin1String("zh"));
+}
+
+void Window::SyncRuleFields()
+{
+    if (!m_bridge)
+        return;
+
+    m_syncing = true;
+    // Never overwrite a field the user is typing into: a countsChanged while a
+    // debounce is pending would otherwise restore the previous rule text.
+    if (!m_find->hasFocus() && m_find->text() != m_bridge->ruleFind())
+        m_find->setText(m_bridge->ruleFind());
+    if (!m_replace->hasFocus() && m_replace->text() != m_bridge->ruleReplace())
+        m_replace->setText(m_bridge->ruleReplace());
+    m_regex->setChecked(m_bridge->ruleMatch() == 1);
+    m_matchAll->setChecked(m_bridge->ruleMatchAll());
+    m_caseSensitive->setChecked(m_bridge->ruleCaseSensitive());
+    m_scope->setCurrentIndex(qBound(0, m_bridge->ruleScope(), 2));
+    for (int i = 0; i < 4; ++i)
+        m_caseButtons[i]->setChecked(m_bridge->caseTransform() == i + 1);
+    m_syncing = false;
+
+    const bool invalid = m_bridge->ruleRegexInvalid();
+    if (m_find->property("invalid").toBool() != invalid)
+    {
+        m_find->setProperty("invalid", invalid);
+        m_find->style()->unpolish(m_find);
+        m_find->style()->polish(m_find);
+    }
+}
+
+void Window::SyncTextEditor()
+{
+    if (!m_bridge || !m_text)
+        return;
+    if (m_bridge->mode() != QStringLiteral("text") || m_text->hasFocus())
+        return;
+    if (m_text->toPlainText() == m_bridge->buffer())
+        return;
+    m_syncing = true;
+    m_text->setPlainText(m_bridge->buffer());
+    m_syncing = false;
+}
+
+void Window::PushRule()
+{
+    if (!m_bridge || m_syncing)
+        return;
+    m_bridge->setRule(m_scope->currentIndex(), m_regex->isChecked() ? 1 : 0,
+                      m_find->text(), m_replace->text(), true,
+                      m_matchAll->isChecked(), m_caseSensitive->isChecked());
+}
+
+void Window::RequestMode(const QString& target)
+{
+    if (!m_bridge || m_bridge->mode() == target)
+        return;
+
+    if (!m_bridge->switchMode(target))
+    {
+        const QString text = T("当前有未执行的修改。切换到另一种模式会丢弃它，继续吗？",
+                               "There are unexecuted changes. Switching modes will discard them. Continue?");
+        if (Ask(text, T("继续", "Continue")))
+        {
+            m_bridge->forceSwitchMode(target);
+        }
+        else
+        {
+            RefreshMode();
+            return;
+        }
+    }
+    RefreshAll();
+    if (m_bridge->mode() == QStringLiteral("text"))
+        m_text->setFocus();
+}
+
+void Window::RefreshAll()
+{
+    if (!m_bridge)
+        return;
+    SyncRuleFields();
+    RefreshMode();
+    RefreshCounts();
+    RefreshEmptyState();
+    RefreshFooter();
+    SyncTextEditor();
+}
+
+void Window::RefreshMode()
+{
+    const bool text = m_bridge->mode() == QStringLiteral("text");
+    m_modeRules->setChecked(!text);
+    m_modeText->setChecked(text);
+    m_leftStack->setCurrentIndex(text ? 1 : 0);
+}
+
+void Window::RefreshCounts()
+{
+    if (!m_bridge)
+        return;
+
+    const int total = m_bridge->totalCount();
+    const int ready = m_bridge->readyCount();
+    m_originalHeader->setText(T("原始 (%1)", "Original (%1)").arg(total));
+    m_targetHeader->setText(T("重命名后 (%1)", "Renamed (%1)").arg(ready));
+
+    m_syncing = true;
+    m_selectAll->setChecked(m_bridge->allSelected());
+    const QString filter = m_bridge->filter();
+    m_filter->setCurrentIndex(filter == QStringLiteral("selected") ? 1
+                            : filter == QStringLiteral("applicable") ? 2
+                            : filter == QStringLiteral("to-rename") ? 3 : 0);
+    m_syncing = false;
+
+    m_apply->setText(T("重命名 %1 项", "Rename %1").arg(ready));
+    m_apply->setEnabled(m_bridge->canExecute());
+    m_apply->setVisible(m_bridge->doneLine().isEmpty());
+}
+
+void Window::RefreshEmptyState()
+{
+    if (!m_bridge)
+        return;
+
+    const bool empty = m_bridge->previewModel()->rowCount() == 0;
+    m_tableStack->setCurrentWidget(empty ? static_cast<QWidget*>(m_empty) : m_table);
+    if (!empty)
+        return;
+
+    const QString done = m_bridge->doneLine();
+    const QString blocked = m_bridge->blockingReason();
+    if (!done.isEmpty())
+    {
+        m_empty->setText(done + QLatin1Char('\n')
+                         + T("可在资源管理器里按 Ctrl+Z 撤消", "Undo with Ctrl+Z in Explorer"));
+        m_empty->setStyleSheet(QStringLiteral("color:%1;").arg(m_theme->ok.name()));
+    }
+    else if (!blocked.isEmpty())
+    {
+        m_empty->setText(blocked);
+        m_empty->setStyleSheet(QStringLiteral("color:%1;").arg(m_theme->danger.name()));
+    }
+    else
+    {
+        m_empty->setText(T("这里会列出要改名的文件。\n从文件夹标签打开，或选中文件后右键“重命名…”。",
+                           "The files to rename appear here.\nOpen it from a folder tab, or right-click selected files."));
+        m_empty->setStyleSheet(QStringLiteral("color:%1;").arg(m_theme->faint.name()));
+    }
+}
+
+void Window::RefreshFooter()
+{
+    if (!m_bridge)
+        return;
+
+    const QString done = m_bridge->doneLine();
+    const int errors = m_bridge->errorCount();
+    const int ready = m_bridge->readyCount();
+    const int unchanged = m_bridge->unchangedCount();
+
+    const QString blocking = m_bridge->blockingReason();
+    QColor dot = m_theme->faint;
+    if (!done.isEmpty())
+        dot = m_theme->ok;
+    else if (!blocking.isEmpty() || errors > 0)
+        dot = m_theme->caution;
+    else if (ready > 0)
+        dot = m_theme->ok;
+    m_dot->setStyleSheet(QStringLiteral("background:%1;border-radius:4px;").arg(dot.name()));
+
+    if (!done.isEmpty())
+    {
+        m_status->setText(done);
+    }
+    else
+    {
+        QString line = T("%1 项会改 · %2 项不变", "%1 to rename · %2 unchanged")
+                           .arg(ready)
+                           .arg(unchanged);
+        if (errors > 0)
+            line += T(" · %1 项冲突或有问题", " · %1 blocked").arg(errors);
+        else if (ready > 0)
+            line += T(" · 无冲突", " · no conflicts");
+        m_status->setText(line);
+    }
+
+    QString hint;
+    if (!blocking.isEmpty())
+        hint = blocking;
+    else if (ready > 0)
+        hint = T("Enter 执行 · 可撤销", "Enter runs · undoable");
+    else
+        hint = T("在上方输入查找与替换", "Type a find and a replace above");
+    m_hint->setText(hint);
+    m_hint->setToolTip(hint);
+    m_status->setStyleSheet(QStringLiteral("color:%1;").arg(m_theme->subtext.name()));
+    m_hint->setStyleSheet(QStringLiteral("color:%1;")
+                              .arg((blocking.isEmpty() ? m_theme->faint : m_theme->danger).name()));
+}
+
+void Window::ApplyAppearance()
+{
+    if (!m_bridge || !m_theme)
+        return;
+
+    *m_theme = Theme::From(m_bridge->look(), m_bridge->dark(), m_bridge->uiSize());
+    m_theme->apply(this);
+
+    setWindowTitle(T("重命名", "Rename"));
+    m_table->verticalHeader()->setDefaultSectionSize(m_theme->rowHeight);
+    m_table->setColumnWidth(0, 34);
+    if (m_text)
+    {
+        QFont mono(QStringLiteral("Cascadia Mono"));
+        mono.setStyleHint(QFont::Monospace);
+        mono.setPixelSize(m_theme->fontBody);
+        m_text->setFont(mono);
+        m_text->setTabStopDistance(4 * QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' ')));
+    }
+    ApplyTitleBar();
+    RefreshFooter();
+    RefreshEmptyState();
+}
+
+void Window::ApplyTitleBar()
+{
+    ApplyDarkTitleBar(this, m_theme && m_theme->dark);
+}
+
+void Window::ConfirmAndApply()
+{
+    if (!m_bridge)
+        return;
+
+    // A click can arrive before the debounce has pushed the last keystroke.
+    if (m_ruleTimer)
+        m_ruleTimer->stop();
+    if (m_textTimer)
+        m_textTimer->stop();
+    if (m_bridge->mode() == QStringLiteral("control"))
+        PushRule();
+    else
+        m_bridge->setBuffer(m_text->toPlainText());
+
+    if (!m_bridge->canExecute())
+        return;
+
+    const int ready = m_bridge->readyCount();
+    const int unchanged = m_bridge->unchangedCount();
+    const int errors = m_bridge->errorCount();
+
+    QString text = T("将重命名 %1 项。", "Rename %1 item(s).").arg(ready);
+    if (unchanged > 0)
+        text += T("\n%1 项不变。", "\n%1 unchanged.").arg(unchanged);
+    if (errors > 0)
+        text += T("\n%1 项冲突或有问题，不会执行。", "\n%1 item(s) blocked and will not run.").arg(errors);
+    text += T("\n\n确定执行吗？", "\n\nRun it now?");
+
+    if (!Ask(text, T("重命名", "Rename")))
+        return;
+
+    m_bridge->apply();
+    RefreshAll();
+}
+
+bool Window::Ask(const QString& text, const QString& acceptText)
+{
+    QMessageBox box(QMessageBox::Question, T("重命名", "Rename"), text,
+                    QMessageBox::NoButton, this);
+    box.setIcon(QMessageBox::Question);
+    if (m_theme)
+        m_theme->apply(&box);
+    QAbstractButton* accept = box.addButton(acceptText, QMessageBox::AcceptRole);
+    QAbstractButton* cancel = box.addButton(T("取消", "Cancel"), QMessageBox::RejectRole);
+    box.setDefaultButton(qobject_cast<QPushButton*>(cancel));
+    box.exec();
+    return box.clickedButton() == accept;
+}
+
+void Window::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+
+    static bool placed = false;
+    if (!placed)
+    {
+        placed = true;
+        if (QScreen* screen = this->screen())
+        {
+            const QRect area = screen->availableGeometry();
+            move(area.center() - rect().center());
+        }
+    }
+    ApplyTitleBar();
+}
+
+void Window::GrabToFile(const QString& path)
+{
+    QTimer::singleShot(800, this, [this, path] {
+        const QPixmap pixmap = grab();
+        const bool saved = pixmap.save(path, "PNG");
+        std::fprintf(stderr, "[rename] grab %s: %s (%dx%d)\n",
+                     saved ? "written" : "FAILED", path.toUtf8().constData(),
+                     pixmap.width(), pixmap.height());
+        std::fflush(stderr);
+        QCoreApplication::quit();
+    });
+}
+
+} // namespace rename_widgets

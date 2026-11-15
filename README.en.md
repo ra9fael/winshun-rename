@@ -2,6 +2,16 @@
 
 **Status: core and window verified locally (S1–S9); the host is not verified.** Local verification spec: [TEST-SPEC.en.md](TEST-SPEC.en.md). This round's measurements: [docs/validation/rename-local-20261113/README.en.md](docs/validation/rename-local-20261113/README.en.md). Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md).
 
+## Qt Widgets experiment
+
+This branch replaces the Qt Quick window with Qt Widgets: `ui/widgets_window.*`
+holds the table, rule column and text editor, and `ui/qt_host.cpp` only creates
+the `QApplication` and the window. The core, presenter, bridge and executor are
+unchanged. Build with `-DRENAME_BUILD_QT=ON` as before, but Qt Widgets is now
+required; `tools/pack.ps1` bundles `Qt6Widgets.dll` until WinShun's shared-Qt
+contract includes it. Measurements, screenshots and open items:
+[docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md).
+
 ## Trying it locally (no host)
 
 `rename-ui.exe` is a standalone window wrapper for verifying the interface and the logic without Win顺. It links the same code the plugin's window uses.

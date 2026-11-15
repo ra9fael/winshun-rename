@@ -20,7 +20,7 @@
     "sandbox": "normal",
     "start": "lazy",
     "timeoutMs": 1500,
-    "memoryMB": 128,
+    "memoryMB": 512,
     "idleExitSec": 0,
     "encoding": "utf-8"
   },

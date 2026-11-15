@@ -15,6 +15,7 @@
 #include "ui/presenter.h"
 #include "win/platform.h"
 
+#include <QColor>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -43,6 +44,7 @@ public:
     explicit PreviewModel(QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex& parent = QModelIndex()) const override;
     QVariant data(const QModelIndex& index, int role) const override;
     bool setData(const QModelIndex& index, const QVariant& value, int role) override;
     Qt::ItemFlags flags(const QModelIndex& index) const override;
@@ -50,6 +52,8 @@ public:
 
     void setRows(const std::vector<rename_ui::Row>& rows);
     std::vector<rename_ui::Row> rows() const { return m_rows; }
+    void setLocale(const QString& locale) { m_locale = locale; }
+    void setColors(const QColor& text, const QColor& subtext, const QColor& faint, const QColor& danger);
 
 signals:
     // Emitted when the user toggles a checkbox, so the bridge can push the
@@ -57,7 +61,14 @@ signals:
     void selectionChanged(const QString& id, bool selected);
 
 private:
+    QString targetText(const rename_ui::Row& row) const;
+
     std::vector<rename_ui::Row> m_rows;
+    QString m_locale = QStringLiteral("zh");
+    QColor m_text;
+    QColor m_subtext;
+    QColor m_faint;
+    QColor m_danger;
 };
 
 // The window's presenter front end.
@@ -78,7 +89,7 @@ class Bridge : public QObject
     Q_PROPERTY(bool allSelected READ allSelected NOTIFY countsChanged)
     Q_PROPERTY(bool ruleRegexInvalid READ ruleRegexInvalid NOTIFY ruleChanged)
     Q_PROPERTY(QString doneLine READ doneLine NOTIFY changed)
-    Q_PROPERTY(QAbstractListModel* previewModel READ previewModel CONSTANT)
+    Q_PROPERTY(PreviewModel* previewModel READ previewModel CONSTANT)
 
     // The host's look (docs/plugins.md, 外观): `look` is `appearance.nativeLook`
     // verbatim, so QML reads the style's own colours and radii and keeps a
@@ -117,7 +128,8 @@ public:
     bool allSelected() const;
     bool ruleRegexInvalid() const;
     QString doneLine() const { return m_doneLine; }
-    QAbstractListModel* previewModel();
+    QString filter() const;
+    PreviewModel* previewModel();
     QVariantMap look() const { return m_look; }
     QString locale() const { return m_locale; }
     bool dark() const { return m_dark; }
@@ -164,7 +176,11 @@ public:
         // setSelection so the two meanings — "these items" and "what is in here" —
         // cannot be confused at a call site.
         Q_INVOKABLE void setFolder(const QString& folder, bool recursive);
-    Q_INVOKABLE void switchMode(const QString& mode);
+    // False when the current mode has unexecuted edits; the Widgets window then
+    // asks the user and calls forceSwitchMode(). (The old QML path returned void
+    // and silently ignored the click.)
+    Q_INVOKABLE bool switchMode(const QString& mode);
+    Q_INVOKABLE bool forceSwitchMode(const QString& mode);
     Q_INVOKABLE void setFilter(const QString& filter);
     Q_INVOKABLE void toggleRow(const QString& id, bool selected);
     Q_INVOKABLE void selectAll(bool selected);
@@ -187,6 +203,8 @@ signals:
     void ruleChanged();
 
 private:
+    bool SwitchMode(const QString& target, bool force);
+    void BuildOilTable();
     void Refresh();
     void PublishRows();
 
@@ -199,6 +217,10 @@ private:
     bool m_dark = false;
     QString m_uiSize = QStringLiteral("standard");
     QString m_doneLine;
+    // A selection that could not be enumerated (a missing root, an unreadable
+    // folder). Kept apart from m_doneLine: a failure is not a finished batch and
+    // must not get the "undo with Ctrl+Z" line.
+    QString m_blockedLine;
         // The folder this batch works in, when it came from "open here" rather than
         // from a selection. Empty for a plain selection.
         QString m_folder;

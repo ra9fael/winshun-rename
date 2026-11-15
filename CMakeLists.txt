@@ -21,7 +21,7 @@ endif()
 # for every target: Qt's DLLs are built with the dynamic CRT, and MSVC refuses to
 # link a static-CRT object into a dynamic-CRT image (LNK2038). One switch, so the
 # two can never disagree.
-option(RENAME_BUILD_QT "Build the Qt Quick window (requires Qt 6.5+)" OFF)
+option(RENAME_BUILD_QT "Build the Qt Widgets window (requires Qt 6.5+)" OFF)
 
 if(RENAME_BUILD_QT)
     set(RENAME_CRT "MultiThreadedDLL$<$<CONFIG:Debug>:MultiThreadedDebugDLL>")
@@ -132,50 +132,40 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set_target_properties(rename_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests")
 endforeach()
 
-# ---- optional Qt Quick layer ------------------------------------------------
+# ---- optional Qt Widgets layer ----------------------------------------------
 # The window lives inside rename.exe rather than in a second exe, because
 # plugin.json names one runtime.program and the shared-Qt runner starts that. The
 # structure mirrors ra9fael.envhosts: the Qt event loop owns the main thread, the
-# JSON-RPC loop moves to a worker, and only Core/Gui/Qml/Quick/QuickControls2 are
-# linked (the modules the shared-Qt contract guarantees, docs/plugins.md).
+# JSON-RPC loop moves to a worker. This experiment uses Widgets instead of QML:
+# no QML engine and no scene graph, at the cost of Qt6Widgets.dll not being in
+# WinShun's shared-Qt contract yet (bundle it during the experiment).
 #
 # RENAME_BUILD_QT and RENAME_CRT are declared at the top: the switch decides the
 # CRT for every target, so it has to be known before the first one is defined.
 if(RENAME_BUILD_QT)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
     qt_standard_project_setup()
-    qt_policy(SET QTP0001 NEW)
 
-    add_library(rename_qml STATIC
+    add_library(rename_widgets STATIC
         ui/bridge.cpp
         ui/qt_host.cpp
+        ui/widgets_window.cpp
+        ui/widgets_theme.cpp
     )
-    target_include_directories(rename_qml PUBLIC "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(rename_qml PUBLIC rename_core rename_ui rename_win)
-    target_link_libraries(rename_qml PUBLIC Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2)
-    set_target_properties(rename_qml PROPERTIES AUTOMOC ON)
+    target_include_directories(rename_widgets PUBLIC "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(rename_widgets PUBLIC rename_core rename_ui rename_win)
+    target_link_libraries(rename_widgets PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets)
+    if(WIN32)
+        target_link_libraries(rename_widgets PUBLIC dwmapi)
+    endif()
+    set_target_properties(rename_widgets PROPERTIES AUTOMOC ON)
     if(MSVC)
-        target_compile_options(rename_qml PRIVATE /utf-8 /W4 /permissive-)
-        set_target_properties(rename_qml PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
+        target_compile_options(rename_widgets PRIVATE /utf-8 /W4 /permissive-)
+        set_target_properties(rename_widgets PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
     endif()
 
-    # QML sources under a stable prefix the C++ side loads
-    # (qrc:/qt/qml/Rename/Main.qml and .../Tokens.qml).
-    #
-    # Tokens.qml is deliberately not called Theme.qml: it and Main.qml sit in one
-    # directory, which QML imports implicitly, so a file named Theme.qml becomes a
-    # type that shadows the `Theme` context property and every Theme.foo reads as
-    # an undefined property of a type rather than the token object.
-    qt_add_resources(rename_qml "rename_qml_sources"
-        PREFIX /qt/qml/Rename
-        BASE "${CMAKE_SOURCE_DIR}/ui/qml"
-        FILES
-            ui/qml/Main.qml
-            ui/qml/Tokens.qml
-    )
-
     # main.cpp gains the window path; RENAME_HAVE_QT is what selects it there.
-    target_link_libraries(rename PRIVATE rename_qml)
+    target_link_libraries(rename PRIVATE rename_widgets)
     target_compile_definitions(rename PRIVATE RENAME_HAVE_QT)
 
     # ---- standalone window wrapper (local verification only) ----------------
@@ -186,10 +176,10 @@ if(RENAME_BUILD_QT)
     #   rename-ui.exe --dir <folder> [--recursive]
     #   rename-ui.exe --files <path> [<path>...]
     #
-    # It links the same rename_qml and rename_win, so the code path under test is
-    # the plugin's own.
+    # It links the same rename_widgets and rename_win, so the code path under test
+    # is the plugin's own.
     add_executable(rename_ui_exe ui/main-ui.cpp)
-    target_link_libraries(rename_ui_exe PRIVATE rename_qml rename_win)
+    target_link_libraries(rename_ui_exe PRIVATE rename_widgets rename_win)
     set_target_properties(rename_ui_exe PROPERTIES AUTOMOC ON OUTPUT_NAME "rename-ui")
     if(MSVC)
         set_target_properties(rename_ui_exe PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
@@ -199,7 +189,7 @@ if(RENAME_BUILD_QT)
         set_target_properties(rename_ui_exe PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}")
     endforeach()
 else()
-    message(STATUS "RENAME_BUILD_QT=OFF: building without the Qt Quick window")
+    message(STATUS "RENAME_BUILD_QT=OFF: building without the Qt Widgets window")
 endif()
 
 enable_testing()

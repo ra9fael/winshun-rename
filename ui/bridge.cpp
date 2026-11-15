@@ -6,7 +6,12 @@
 #include "ui/bridge.h"
 #include "win/platform.h"
 
+#include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QFont>
 #include <QStringList>
+#include <QStyle>
 
 namespace rename_qml {
 
@@ -27,6 +32,26 @@ QString StatusText(rename_core::Status status)
     return QString::fromLatin1(rename_core::StatusId(status).data());
 }
 
+QColor LookColor(const QVariantMap& look, const char* key, const QColor& fallback)
+{
+    const auto it = look.constFind(QString::fromLatin1(key));
+    if (it == look.cend())
+        return fallback;
+    const QString text = it->toString().trimmed();
+    if (text.startsWith(QLatin1Char('#')) && text.size() == 9)
+    {
+        bool ok = false;
+        const int a = text.mid(1, 2).toInt(&ok, 16);
+        const int r = ok ? text.mid(3, 2).toInt(&ok, 16) : 0;
+        const int g = ok ? text.mid(5, 2).toInt(&ok, 16) : 0;
+        const int b = ok ? text.mid(7, 2).toInt(&ok, 16) : 0;
+        if (ok)
+            return QColor(r, g, b, a);
+    }
+    const QColor parsed(text);
+    return parsed.isValid() ? parsed : fallback;
+}
+
 } // namespace
 
 // ---- PreviewModel ------------------------------------------------------------
@@ -38,12 +63,56 @@ int PreviewModel::rowCount(const QModelIndex& parent) const
     return parent.isValid() ? 0 : static_cast<int>(m_rows.size());
 }
 
+int PreviewModel::columnCount(const QModelIndex& parent) const
+{
+    return parent.isValid() ? 0 : 3;
+}
+
+void PreviewModel::setColors(const QColor& text, const QColor& subtext,
+                             const QColor& faint, const QColor& danger)
+{
+    m_text = text;
+    m_subtext = subtext;
+    m_faint = faint;
+    m_danger = danger;
+    if (!m_rows.empty())
+        emit dataChanged(index(0, 0), index(static_cast<int>(m_rows.size()) - 1, 2));
+}
+
+QString PreviewModel::targetText(const rename_ui::Row& row) const
+{
+    const bool zh = m_locale.startsWith(QLatin1String("zh"));
+    const QString target = ToQt(row.targetLeaf);
+    switch (row.status)
+    {
+    case rename_core::Status::ErrorAlreadyExists:
+        return zh ? QStringLiteral("目标已存在：") + target
+                  : QStringLiteral("target exists: ") + target;
+    case rename_core::Status::ErrorTooLong:
+        return zh ? QStringLiteral("名字过长") : QStringLiteral("too long");
+    case rename_core::Status::ErrorInvalidCharacter:
+        return zh ? QStringLiteral("含非法字符") : QStringLiteral("invalid char");
+    case rename_core::Status::ErrorEmptyName:
+        return zh ? QStringLiteral("空名字") : QStringLiteral("empty name");
+    case rename_core::Status::ErrorBadRule:
+        return zh ? QStringLiteral("规则错误") : QStringLiteral("bad rule");
+    default:
+        return target;
+    }
+}
+
 QVariant PreviewModel::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(m_rows.size()))
         return {};
 
     const rename_ui::Row& row = m_rows[static_cast<std::size_t>(index.row())];
+    const bool error = row.status == rename_core::Status::ErrorAlreadyExists
+                    || row.status == rename_core::Status::ErrorTooLong
+                    || row.status == rename_core::Status::ErrorInvalidCharacter
+                    || row.status == rename_core::Status::ErrorEmptyName
+                    || row.status == rename_core::Status::ErrorBadRule;
+
     switch (role)
     {
     case IdRole:       return QString::fromStdString(row.id);
@@ -54,7 +123,46 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
     case IsFolderRole: return row.isFolder;
     case DepthRole:    return static_cast<int>(row.depth);
     case NoteRole:     return ToQt(row.note);
-    default:           return {};
+
+    case Qt::CheckStateRole:
+        return index.column() == 0 ? (row.selected ? Qt::Checked : Qt::Unchecked) : QVariant();
+    case Qt::DisplayRole:
+        if (index.column() == 0)
+            return QString();
+        if (index.column() == 1)
+            return ToQt(row.originalLeaf);
+        return targetText(row);
+    case Qt::DecorationRole:
+        if (index.column() == 1 && QApplication::style())
+            return QApplication::style()->standardIcon(row.isFolder ? QStyle::SP_DirIcon
+                                                                    : QStyle::SP_FileIcon);
+        return QVariant();
+    case Qt::ForegroundRole:
+        if (index.column() == 2)
+        {
+            if (error)
+                return m_danger;
+            return row.status == rename_core::Status::Unchanged ? m_faint : m_text;
+        }
+        if (index.column() == 1)
+            return error ? m_faint : m_text;
+        return QVariant();
+    case Qt::FontRole:
+        if (index.column() == 2 && row.status == rename_core::Status::Ready)
+        {
+            QFont font = QApplication::font();
+            font.setBold(true);
+            return font;
+        }
+        return QVariant();
+    case Qt::TextAlignmentRole:
+        return static_cast<int>(Qt::AlignVCenter | Qt::AlignLeft);
+    case Qt::ToolTipRole:
+        if (error)
+            return targetText(row);
+        return row.note.empty() ? QVariant() : ToQt(row.note);
+    default:
+        return {};
     }
 }
 
@@ -62,16 +170,16 @@ bool PreviewModel::setData(const QModelIndex& index, const QVariant& value, int 
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(m_rows.size()))
         return false;
-    if (role != SelectedRole)
+    if (index.column() != 0 || (role != SelectedRole && role != Qt::CheckStateRole))
         return false;
 
     rename_ui::Row& row = m_rows[static_cast<std::size_t>(index.row())];
-    const bool selected = value.toBool();
+    const bool selected = role == Qt::CheckStateRole ? value.toInt() == Qt::Checked : value.toBool();
     if (row.selected == selected)
         return false;
 
     row.selected = selected;
-    emit dataChanged(index, index, {SelectedRole});
+    emit dataChanged(index, index, {SelectedRole, Qt::CheckStateRole});
     emit selectionChanged(QString::fromStdString(row.id), selected);
     return true;
 }
@@ -80,9 +188,12 @@ Qt::ItemFlags PreviewModel::flags(const QModelIndex& index) const
 {
     if (!index.isValid())
         return Qt::NoItemFlags;
-    // Only the checkbox is editable; the names are read-only because editing them
-    // is what the text mode is for (UI-SPEC.md §2.3).
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable;
+    // Only the first column is checkable; the names are read-only because editing
+    // them is what the text mode is for (UI-SPEC.md §2.3).
+    Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    if (index.column() == 0)
+        flags |= Qt::ItemIsUserCheckable;
+    return flags;
 }
 
 QHash<int, QByteArray> PreviewModel::roleNames() const
@@ -129,6 +240,14 @@ void Bridge::ApplyAppearance(const QString& locale, bool dark, const QString& ui
     m_dark = dark;
     m_uiSize = uiSize.isEmpty() ? QStringLiteral("standard") : uiSize;
     m_look = nativeLook;
+
+    const bool isDark = m_dark;
+    m_previewModel.setLocale(m_locale);
+    m_previewModel.setColors(
+        LookColor(m_look, "text", isDark ? QColor(QStringLiteral("#F3F3F3")) : QColor(QStringLiteral("#1B1B1B"))),
+        LookColor(m_look, "subtext", isDark ? QColor(QStringLiteral("#B8B8B8")) : QColor(QStringLiteral("#666666"))),
+        LookColor(m_look, "faint", QColor(QStringLiteral("#8A8A8A"))),
+        LookColor(m_look, "danger", isDark ? QColor(QStringLiteral("#FF99A4")) : QColor(QStringLiteral("#C42B1C"))));
     emit appearanceChanged();
 }
 
@@ -166,6 +285,10 @@ void Bridge::setBuffer(const QString& text)
 
 QString Bridge::blockingReason() const
 {
+    // A selection that never became a set is a real error, not "no files yet".
+    if (!m_blockedLine.isEmpty())
+        return m_blockedLine;
+
     // A finished batch is not a blocked one: once the run reported what it did,
     // the footer must not also claim there are no files.
     if (!m_doneLine.isEmpty())
@@ -229,16 +352,50 @@ bool Bridge::ruleRegexInvalid() const
     return false;
 }
 
-QAbstractListModel* Bridge::previewModel() { return &m_previewModel; }
+QString Bridge::filter() const
+{
+    switch (m_presenter.CurrentFilter())
+    {
+    case rename_ui::Filter::Selected:    return QStringLiteral("selected");
+    case rename_ui::Filter::Applicable:  return QStringLiteral("applicable");
+    case rename_ui::Filter::ToRename:    return QStringLiteral("to-rename");
+    case rename_ui::Filter::All:         break;
+    }
+    return QStringLiteral("all");
+}
+
+PreviewModel* Bridge::previewModel() { return &m_previewModel; }
 
 void Bridge::setSelection(const QStringList& paths, bool recursive)
 {
+    // A new host selection is a new task: clear the previous report, filter and
+    // text buffer first. Without this a second right-click showed "Renamed N"
+    // and the old oil buffer beside the new files.
+    m_presenter.SetMode(rename_ui::Mode::Control);
+    m_presenter.SetBuffer({});
+    m_presenter.SetOilTable({});
+    m_presenter.SetFilter(rename_ui::Filter::All);
+    m_doneLine.clear();
+    m_blockedLine.clear();
+    m_folder.clear();
+    m_collected.clear();
+
     rename_win::EnumerateRequest request;
     request.recursive = recursive;
     for (const QString& path : paths)
         request.roots.push_back(FromQt(path));
 
     const rename_win::EnumerateResult collected = rename_win::Enumerate(request);
+    if (collected.blocked)
+    {
+        m_doneLine.clear();
+        m_blockedLine = ToQt(collected.blockReason);
+        m_presenter.SetItems({});
+        PublishRows();
+        emit changed();
+        emit countsChanged();
+        return;
+    }
     m_collected = collected.items;
 
     std::vector<rename_core::ItemSnapshot> items;
@@ -267,12 +424,30 @@ void Bridge::setFolder(const QString& folder, bool recursive)
     // are the input set. Same presenter, same plan, same executor as a selection
     // — "here is a folder" and "here are these files" only differ in where the
     // rows come from.
+    m_presenter.SetMode(rename_ui::Mode::Control);
+    m_presenter.SetBuffer({});
+    m_presenter.SetOilTable({});
+    m_presenter.SetFilter(rename_ui::Filter::All);
+    m_doneLine.clear();
+    m_blockedLine.clear();
+    m_collected.clear();
+
     rename_win::EnumerateRequest request;
     request.recursive = recursive;
     request.listContents = true;
     request.roots.push_back(FromQt(folder));
 
     const rename_win::EnumerateResult collected = rename_win::Enumerate(request);
+    if (collected.blocked)
+    {
+        m_doneLine.clear();
+        m_blockedLine = ToQt(collected.blockReason);
+        m_presenter.SetItems({});
+        PublishRows();
+        emit changed();
+        emit countsChanged();
+        return;
+    }
     m_collected = collected.items;
 
     std::vector<rename_core::ItemSnapshot> items;
@@ -291,41 +466,53 @@ void Bridge::setFolder(const QString& folder, bool recursive)
 
     m_presenter.SetItems(std::move(items));
     m_folder = folder;
-    if (collected.blocked)
-        m_doneLine = ToQt(collected.blockReason);
     PublishRows();
     emit changed();
     emit countsChanged();
 }
 
-void Bridge::switchMode(const QString& target)
+bool Bridge::switchMode(const QString& target)
+{
+    return SwitchMode(target, false);
+}
+
+bool Bridge::forceSwitchMode(const QString& target)
+{
+    return SwitchMode(target, true);
+}
+
+bool Bridge::SwitchMode(const QString& target, bool force)
 {
     const rename_ui::Mode wanted = (target == QStringLiteral("text")) ? rename_ui::Mode::Text
                                                                      : rename_ui::Mode::Control;
-    if (!m_presenter.CanSwitchMode(wanted))
-        return;   // uncommitted edits: the QML layer shows the confirm dialog
+    if (!force && !m_presenter.CanSwitchMode(wanted))
+        return false;
     m_presenter.SetMode(wanted);
     if (wanted == rename_ui::Mode::Text && m_presenter.Buffer().empty())
-    {
-        // First entry into the text mode: build the buffer from the input set,
-        // one "/<id> <name>" line per item, so the user starts from what the
-        // host handed over rather than from an empty editor.
-        std::vector<rename_core::OilEntry> table;
-        table.reserve(m_collected.size());
-        for (const rename_win::CollectedItem& entry : m_collected)
-        {
-            rename_core::OilEntry line;
-            line.id = static_cast<long long>(table.size()) + 1;
-            line.originalLeaf = entry.leaf;
-            line.path = entry.fullPath;
-            line.isFolder = entry.isFolder;
-            line.depth = entry.depth;
-            table.push_back(std::move(line));
-        }
-        m_presenter.SetOilTable(std::move(table));
-    }
+        BuildOilTable();
     PublishRows();
     emit changed();
+    return true;
+}
+
+void Bridge::BuildOilTable()
+{
+    // First entry into the text mode: build the buffer from the input set, one
+    // "/<id> <name>" line per item, so the user starts from what the host handed
+    // over rather than from an empty editor.
+    std::vector<rename_core::OilEntry> table;
+    table.reserve(m_collected.size());
+    for (const rename_win::CollectedItem& entry : m_collected)
+    {
+        rename_core::OilEntry line;
+        line.id = static_cast<long long>(table.size()) + 1;
+        line.originalLeaf = entry.leaf;
+        line.path = entry.fullPath;
+        line.isFolder = entry.isFolder;
+        line.depth = entry.depth;
+        table.push_back(std::move(line));
+    }
+    m_presenter.SetOilTable(std::move(table));
 }
 
 void Bridge::setFilter(const QString& filter)
@@ -459,7 +646,13 @@ bool Bridge::apply()
         return false;
 
     std::vector<rename_win::ExecuteItem> batch;
-    std::vector<std::pair<std::string, std::wstring>> applied;
+    struct Applied
+    {
+        std::string id;
+        std::wstring leaf;
+        QString expectedPath;
+    };
+    std::vector<Applied> applied;
 
     for (const rename_ui::Row& row : m_presenter.ExecutionOrder())
     {
@@ -482,7 +675,10 @@ bool Bridge::apply()
         item.depth = row.depth;
         batch.push_back(item);
 
-        applied.emplace_back(row.id, row.targetLeaf);
+        const QString original = QString::fromStdWString(collected->fullPath);
+        const QString parent = QFileInfo(original).absolutePath();
+        applied.push_back({row.id, row.targetLeaf,
+                           QDir::cleanPath(parent + QLatin1Char('/') + QString::fromStdWString(row.targetLeaf))});
     }
 
     if (batch.empty())
@@ -500,20 +696,21 @@ bool Bridge::apply()
     // Only rows that really renamed get their new name folded into the model;
     // folding a failed one would make a second attempt target the wrong name.
     //
-    // Match each successful result back to the row by comparing the planned target
-    // leaf, because Execute reports paths rather than row ids.
+    // Match each successful result back to the row by the full planned target
+    // path. The old suffix comparison could confuse two folders with the same
+    // leaf name.
     std::vector<std::pair<std::string, std::wstring>> successful;
     for (const rename_win::ExecuteResultItem& item : result.items)
     {
         if (item.outcome != rename_win::ExecuteOutcome::Renamed)
             continue;
 
-        for (const auto& [id, leaf] : applied)
+        const QString actual = QDir::cleanPath(QString::fromStdWString(item.targetPath));
+        for (const Applied& appliedItem : applied)
         {
-            if (item.targetPath.size() >= leaf.size() &&
-                item.targetPath.compare(item.targetPath.size() - leaf.size(), leaf.size(), leaf) == 0)
+            if (QString::compare(actual, appliedItem.expectedPath, Qt::CaseInsensitive) == 0)
             {
-                successful.emplace_back(id, leaf);
+                successful.emplace_back(appliedItem.id, appliedItem.leaf);
                 break;
             }
         }
@@ -524,6 +721,7 @@ bool Bridge::apply()
     // The batch is over; the table is empty now, so say what happened instead of
     // letting the empty state claim no files were ever selected.
     const int problems = static_cast<int>(result.items.size()) - renamed;
+    m_blockedLine.clear();
     m_doneLine = m_locale.startsWith(QLatin1String("zh"))
         ? QStringLiteral("已重命名 %1 项%2").arg(renamed)
               .arg(problems > 0 ? QStringLiteral("，%1 项未成功").arg(problems) : QString())
@@ -541,6 +739,12 @@ void Bridge::reset()
 {
     m_collected.clear();
     m_doneLine.clear();
+    m_blockedLine.clear();
+    m_folder.clear();
+    m_presenter.SetMode(rename_ui::Mode::Control);
+    m_presenter.SetBuffer({});
+    m_presenter.SetOilTable({});
+    m_presenter.SetFilter(rename_ui::Filter::All);
     m_presenter.SetItems({});
     PublishRows();
     emit changed();

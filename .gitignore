@@ -14,6 +14,9 @@ __pycache__/
 # plugin.json names it as runtime.program). It ships as a release asset
 # (.wsplugin), not through git. A fresh clone rebuilds it with CMake.
 rename.exe
+rename-ui.exe
+# Bundled only while Qt Widgets is outside WinShun's shared-Qt contract.
+Qt6Widgets.dll
 
 # Probe output: task-level build artifacts and logs live under build/<task>/,
 # and only trimmed excerpts are kept as validation evidence.

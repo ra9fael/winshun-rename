@@ -2,6 +2,10 @@
 
 **状态：核心与窗口已在本地验证（S1–S9），宿主未验证。** 本地验证规范见 [TEST-SPEC.md](TEST-SPEC.md)，本轮实测记录见 [docs/validation/rename-local-20261113/](docs/validation/rename-local-20261113/README.md)。语言/文档互链：[English](README.en.md) · [设计与需求](plugin-design.md) · [界面规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md)。
 
+## Qt Widgets 实验
+
+这个分支把窗口从 Qt Quick 换成了 Qt Widgets：`ui/widgets_window.*` 是新的表格、规则栏和文本编辑器，`ui/qt_host.cpp` 只负责创建 `QApplication` 和窗口。核心、Presenter、Bridge 和执行器没变。构建仍用 `-DRENAME_BUILD_QT=ON`，但需要 Qt Widgets；`tools/pack.ps1` 会把 `Qt6Widgets.dll` 一起装进包（WinShun 的共享 Qt 契约目前还没有 Widgets）。实测、截图和未验证项见 [docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md)。
+
 ## 本地试用（不经宿主）
 
 `rename-ui.exe` 是独立的窗口 wrapper，用来在没有 Win顺 的情况下验证界面与逻辑；它链接的正是插件窗口的同一份代码。
