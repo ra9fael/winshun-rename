@@ -138,7 +138,7 @@ protected:
                 zh ? "在此文件夹批量重命名…" : "Batch rename in this folder…",
                 zh ? "打开批量重命名窗口，列出这个文件夹里的项目 · " + browsed
                    : ("Open the batch rename window on this folder · " + browsed));
-            here.withIcon("glyph:U+E3B4");
+            here.withIcon("glyph:U+EB0A");
             here.withData(winshun::Json::Object {{"openFolder", browsed}});
             here.withScore(100);
             rows.push_back(std::move(here));
@@ -149,7 +149,7 @@ protected:
                 zh ? "打开批量重命名…" : "Open Batch Rename…",
                 zh ? "按 Enter 打开窗口；窗口里可以选择文件夹"
                    : "Press Enter to open the window; choose a folder there");
-            hint.withIcon("glyph:U+E3B4");
+            hint.withIcon("glyph:U+EB0A");
             hint.withData(winshun::Json::Object {{"openWindow", true}});
             rows.push_back(std::move(hint));
         }
