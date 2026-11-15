@@ -231,6 +231,11 @@ struct ReplaceResult {
 
 ReplaceResult Replace(std::wstring_view source, const Rule& rule, const TemplateContext& ctx);
 
+// True when the pattern compiles the way ReplaceRegex() would compile it (same
+// flags, same std::regex). The UI calls this to mark a bad pattern on the rule
+// row before any file is evaluated.
+bool RegexCompiles(std::wstring_view pattern, bool caseSensitive);
+
 // One file as the core sees it. Paths are opaque strings here: identity checks
 // and depth belong to the platform layer, which fills them in.
 struct ItemSnapshot {

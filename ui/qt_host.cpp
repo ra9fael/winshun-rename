@@ -131,6 +131,19 @@ void GrabIfAsked(Ui* ui)
     const QStringList rule = qEnvironmentVariable("RENAME_GRAB_RULE").split(QLatin1Char('\n'));
     if (rule.size() == 2)
         ui->bridge->setSingleRule(0, 0, rule[0], rule[1], true);
+    // A two-line rule plus a third line is a chain: scope/match stay defaults
+    // and the extra rules are literal first-occurrence replaces, enough to
+    // screenshot a chain preview.
+    if (rule.size() > 2)
+    {
+        for (int i = 2; i < rule.size(); ++i)
+        {
+            ui->bridge->addRule();
+            ui->bridge->setRuleAt(ui->bridge->ruleCount() - 1, 0, 0,
+                                  rule[i], QString(), true, true);
+        }
+        ui->bridge->selectRule(0);
+    }
     if (qEnvironmentVariable("RENAME_GRAB_APPLY") == QLatin1String("1"))
         ui->bridge->apply();
     if (qEnvironmentVariableIsSet("RENAME_GRAB_SELECT"))

@@ -128,6 +128,25 @@ ReplaceResult ReplaceRegex(std::wstring_view source,
 
 } // namespace
 
+bool RegexCompiles(std::wstring_view pattern, bool caseSensitive)
+{
+    if (pattern.empty())
+        return true;
+    try
+    {
+        auto flags = std::regex_constants::ECMAScript;
+        if (!caseSensitive)
+            flags |= std::regex_constants::icase;
+        const std::wstring patternText(pattern);
+        const std::wregex patternCheck(patternText, flags);
+        return true;
+    }
+    catch (const std::regex_error&)
+    {
+        return false;
+    }
+}
+
 ReplaceResult Replace(std::wstring_view source, const Rule& rule, const TemplateContext& ctx)
 {
     if (rule.error != RuleError::None)

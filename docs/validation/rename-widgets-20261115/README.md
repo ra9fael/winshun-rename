@@ -121,8 +121,33 @@ crash did not recur with the font/symbol fix and `memoryMB: 256`.
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
 Widgets added to the shared-Qt contract). The installed experimental package is
-`dist/ra9fael.rename-0.2.3.wsplugin` (3,307,899 bytes, SHA-256
-`5f6ee4c06c54c8a968fb3961a7db230b87350bcd5fae2111ba7910f1667c9a73`).
+`dist/ra9fael.rename-0.3.0.wsplugin` (3,330,787 bytes, SHA-256
+`1db9d4b7c7a1849331c582282f8dbcd6bc4f5a33bc36cbe209544adb8db02d4c`).
+
+## Rule chain (0.3.0)
+
+The left column is now a PowerRename-style chain: a preset row, a rule list
+(one row per rule with an enable checkbox and a summary line), row buttons
+(add/duplicate/move up/down/remove), and a detail editor bound to the selected
+rule. Per-rule regex errors turn the find box red; the renamed column
+highlights the changed span between the common prefix and suffix in the accent
+colour.
+
+- Presets live in `<dataDir>/presets.json` and are seeded with three built-ins
+  (space → underscore, merge whitespace, number `001-`). Save/delete work from
+  the row beside the combo.
+- `bridge` moved from one rule to `rename_core::RuleChain`; `setSingleRule`
+  remains for the grab hook and tests, and a fresh window starts with one empty
+  (inert) rule so the editor is never dangling.
+- Core additions: `RegexCompiles()` (same flags as `ReplaceRegex`), and three
+  chain tests (order matters, disabled rules skipped, regex check).
+- Grab probe: `RENAME_GRAB_RULE` with more than two lines builds a chain
+  (`build-qt/probe/widgets-chain2.png`, `widgets-chain3.png`,
+  `installed-030.png`).
+
+| Build | Working set | Private / commit | Notes |
+|---|---:|---:|---|
+| Widgets, rule chain + 4 items, chain of 2 rules | 45 MB | 8.6 MB | dev build, `RENAME_GRAB_RULE` |
 
 ## Memory (this machine)
 

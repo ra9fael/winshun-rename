@@ -75,6 +75,43 @@ private:
     QColor m_danger;
 };
 
+// Rows for the rule chain list. One row per rule in the chain, in chain order;
+// the summary line is what the row paints ("名称 · foo → bar"), the checkbox is
+// the rule's enabled flag.
+class RuleListModel : public QAbstractListModel
+{
+    Q_OBJECT
+
+public:
+    enum Roles {
+        SummaryRole = Qt::UserRole + 1,
+        EnabledRole,
+        ErrorRole,
+    };
+
+    explicit RuleListModel(QObject* parent = nullptr);
+
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex& index, int role) const override;
+    bool setData(const QModelIndex& index, const QVariant& value, int role) override;
+    Qt::ItemFlags flags(const QModelIndex& index) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    void setRules(const std::vector<rename_core::Rule>& rules, const QString& locale);
+    bool ruleError(int index) const;
+    bool ruleEnabled(int index) const;
+
+signals:
+    // The checkbox on a row was toggled; the Bridge owns the chain and applies it.
+    void enabledToggled(int index, bool enabled);
+
+private:
+    QString summary(const rename_core::Rule& rule) const;
+
+    std::vector<rename_core::Rule> m_rules;
+    QString m_locale = QStringLiteral("zh");
+};
+
 // The window's presenter front end.
 class Bridge : public QObject
 {
@@ -132,8 +169,6 @@ public:
     int visibleCount() const;
     int totalCount() const;
     bool allSelected() const;
-    bool ruleRegexInvalid() const;
-    QString doneLine() const { return m_doneLine; }
     QString blockedLine() const { return m_blockedLine; }
     QString filter() const;
     QString currentFolder() const { return m_folder; }
@@ -146,39 +181,54 @@ public:
     bool dark() const { return m_dark; }
     QString uiSize() const { return m_uiSize; }
 
-    // The rule as the window's column holds it. The QML side binds its inputs to
-    // these, so a rule set from outside shows up in the form instead of leaving
-    // blank boxes beside a preview that has clearly used a rule.
-    Q_PROPERTY(QString ruleFind READ ruleFind NOTIFY ruleChanged)
-    Q_PROPERTY(QString ruleReplace READ ruleReplace NOTIFY ruleChanged)
-    Q_PROPERTY(int ruleScope READ ruleScope NOTIFY ruleChanged)
-    Q_PROPERTY(int ruleMatch READ ruleMatch NOTIFY ruleChanged)
-    Q_PROPERTY(bool ruleEnabled READ ruleEnabled NOTIFY ruleChanged)
-    Q_PROPERTY(bool ruleMatchAll READ ruleMatchAll NOTIFY ruleChanged)
-    Q_PROPERTY(bool ruleCaseSensitive READ ruleCaseSensitive NOTIFY ruleChanged)
-    Q_PROPERTY(int caseTransform READ caseTransform NOTIFY ruleChanged)
-
-    QString ruleFind() const { return m_ruleFind; }
-    QString ruleReplace() const { return m_ruleReplace; }
-    int ruleScope() const { return m_ruleScope; }
-    int ruleMatch() const { return m_ruleMatch; }
-    bool ruleEnabled() const { return m_ruleEnabled; }
-    bool ruleMatchAll() const { return m_ruleMatchAll; }
-    bool ruleCaseSensitive() const { return m_ruleCaseSensitive; }
+    // ---- rule chain ----------------------------------------------------------
+    // The chain, as the rule list holds it. The list renders one row per rule in
+    // order; the detail editor edits the selected row. Truth lives here, the
+    // widgets only read ruleAt() and write back through setRuleAt().
+    Q_PROPERTY(RuleListModel* ruleModel READ ruleModel CONSTANT)
+    Q_PROPERTY(int selectedRule READ selectedRule NOTIFY ruleChanged)
+    Q_PROPERTY(int ruleCount READ ruleCount NOTIFY ruleChanged)
+    // Case sensitivity is a flag on the whole batch, as PowerRename's checkbox is
+    // (not per rule): one batch compares names one way.
+    Q_PROPERTY(bool ruleCaseSensitive READ ruleCaseSensitive WRITE setRuleCaseSensitive
+               NOTIFY ruleChanged)
     // The active case transform chip: 0 none, 1 lower, 2 upper, 3 capitalize,
     // 4 title. One at a time, because the core's flags are mutually exclusive in
     // practice (a batch is transformed once).
+    Q_PROPERTY(int caseTransform READ caseTransform NOTIFY ruleChanged)
+
+    RuleListModel* ruleModel() { return &m_ruleModel; }
+    int selectedRule() const { return m_selectedRule; }
+    int ruleCount() const { return static_cast<int>(m_chain.rules.size()); }
+    bool ruleCaseSensitive() const;
+    void setRuleCaseSensitive(bool caseSensitive);
     int caseTransform() const { return m_caseTransform; }
 
-    // The full rule form, as the window's column submits it. `scope`: 0 name,
-    // 1 extension, 2 full name. `match`: 0 literal, 1 regex.
-    Q_INVOKABLE void setRule(int scope, int match, const QString& find,
-                             const QString& replace, bool enabled,
-                             bool matchAll, bool caseSensitive);
-    // "Apply to": 0 name, 1 extension, 2 full name. Kept separate from setRule so
-    // pressing one of the three square buttons does not have to restate the
-    // find/replace text the fields already hold.
-    Q_INVOKABLE void setScope(int scope);
+    // A rule as the detail editor shows it: scope (0 name, 1 extension, 2 full),
+    // match (0 literal, 1 regex), occurrence (0 first, 1 all), the two strings,
+    // and per-rule enabled. "error" is true when a regex pattern does not
+    // compile; the editor turns the find box red.
+    Q_INVOKABLE QVariantMap ruleAt(int index) const;
+    Q_INVOKABLE void setRuleAt(int index, int scope, int match, const QString& find,
+                               const QString& replace, bool enabled, bool matchAll);
+    Q_INVOKABLE void selectRule(int index);
+    Q_INVOKABLE int addRule();
+    Q_INVOKABLE void duplicateRule(int index);
+    Q_INVOKABLE void removeRule(int index);
+    Q_INVOKABLE void moveRule(int from, int to);
+
+    // The selected rule's regex does not compile: the find box turns red before
+    // the user presses anything. A bad pattern surfaces as bad-rule rows anyway.
+    Q_INVOKABLE bool ruleRegexInvalid() const;
+    QString doneLine() const { return m_doneLine; }
+
+    // ---- presets ---------------------------------------------------------------
+    // Named chains stored in <dataDir>/presets.json. The first read seeds three
+    // built-ins so the menu is never empty.
+    Q_INVOKABLE QStringList presetNames() const;
+    Q_INVOKABLE void loadPreset(const QString& name);
+    Q_INVOKABLE bool savePreset(const QString& name);
+    Q_INVOKABLE void deletePreset(const QString& name);
 
     // Called by the host when a `files` selection arrives.
     Q_INVOKABLE void setSelection(const QStringList& paths, bool recursive);
@@ -203,7 +253,8 @@ public:
     Q_INVOKABLE void setCaseTransform(int which);
 
     // The single-rule shorthand kept for the wrapper's grab hook and the tests.
-    // scope: 0 = name, 1 = extension, 2 = full. match: 0 = literal, 1 = regex.
+    // Replaces the whole chain with one rule. scope: 0 = name, 1 = extension,
+    // 2 = full. match: 0 = literal, 1 = regex.
     Q_INVOKABLE void setSingleRule(int scope, int match, const QString& find,
                                    const QString& replace, bool enabled);
     Q_INVOKABLE bool apply();
@@ -221,9 +272,32 @@ private:
     void BuildOilTable();
     void Refresh();
     void PublishRows();
+    // Push m_chain/m_flags into the presenter and republish. Every chain edit
+    // funnels here, so no mutation can forget the plan refresh.
+    void SyncControlState();
+    void RefreshRuleErrors();
+    void LoadPresets() const;
+    void StorePresets() const;
 
     rename_ui::Presenter m_presenter;
     PreviewModel m_previewModel;
+    RuleListModel m_ruleModel;
+    // The chain as the UI edits it. Empty-search rules are kept here (they are
+    // placeholders mid-typing) and are harmless in the core: both Replace paths
+    // return the source unchanged for an empty search.
+    rename_core::RuleChain m_chain;
+    // Batch-level flags the UI owns: case transform bits and case sensitivity.
+    std::uint32_t m_flags = 0;
+    int m_selectedRule = -1;
+    int m_caseTransform = 0;          // 0 none, 1 lower, 2 upper, 3 capitalize, 4 title
+    struct Preset
+    {
+        QString name;
+        rename_core::RuleChain chain;
+        std::uint32_t flags = 0;
+    };
+    mutable std::vector<Preset> m_presets;
+    mutable bool m_presetsLoaded = false;
     std::vector<rename_win::CollectedItem> m_collected;
     std::wstring m_dataDir;
     QVariantMap m_look;
@@ -238,19 +312,6 @@ private:
         // The folder this batch works in, when it came from "open here" rather than
         // from a selection. Empty for a plain selection.
         QString m_folder;
-
-        // The single rule as the row holds it. Kept here (not only in the QML inputs)
-        // so the row can be filled from outside and so the four values survive a
-        // mode switch. Only the two strings are text the user edits; the rest are
-        // choices.
-        QString m_ruleFind;
-        QString m_ruleReplace;
-        int m_ruleScope = 0;      // 0 name, 1 extension, 2 full
-        int m_ruleMatch = 0;      // 0 literal, 1 regex
-        bool m_ruleEnabled = true;
-        bool m_ruleMatchAll = true;      // replace every occurrence, as PowerRename's box
-        bool m_ruleCaseSensitive = false; // Windows names are what they are: literal by default
-        int m_caseTransform = 0;          // 0 none, 1 lower, 2 upper, 3 capitalize, 4 title
     };
 
 } // namespace rename_qml

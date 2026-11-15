@@ -13,6 +13,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QListView;
 class QPushButton;
 class QStackedWidget;
 class QTableView;
@@ -55,6 +56,9 @@ private:
     void RefreshEmptyState();
     void RefreshFooter();
     void RefreshMode();
+    void RefreshRuleList();
+    void RefreshPresets();
+    void SyncRuleSelection();
     void Retranslate();
     void SyncRuleFields();
     void SyncTextEditor();
@@ -89,6 +93,18 @@ private:
     QToolButton* m_reload = nullptr;
 
     QStackedWidget* m_leftStack = nullptr;
+
+    // The rule chain: list (master), row buttons, presets, and the detail editor
+    // bound to the selected rule.
+    QListView* m_ruleList = nullptr;
+    QToolButton* m_ruleAdd = nullptr;
+    QToolButton* m_ruleDup = nullptr;
+    QToolButton* m_ruleUp = nullptr;
+    QToolButton* m_ruleDown = nullptr;
+    QToolButton* m_ruleRemove = nullptr;
+    QComboBox* m_preset = nullptr;
+    QToolButton* m_presetSave = nullptr;
+    QToolButton* m_presetDelete = nullptr;
 
     QLineEdit* m_find = nullptr;
     QLineEdit* m_replace = nullptr;

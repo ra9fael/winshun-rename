@@ -8,6 +8,7 @@
 #include "core/rename_core.h"
 #include "tests/test_harness.h"
 
+#include <algorithm>
 #include <string>
 
 using namespace rename_core;
@@ -817,4 +818,56 @@ TEST_CASE(BothModesAgreeOnStatusForSameName)
 
     CHECK_EQ(viaControl.status, Status::ErrorInvalidCharacter);
     CHECK_EQ(oilStatus, Status::ErrorInvalidCharacter);
+}
+
+// ---- chains: order, disabled rules, and the shared counter -------------------
+
+TEST_CASE(ChainAppliesRulesInOrder)
+{
+    // "a->b" then "b->c" must end at c; reversed, it never leaves a.
+    RuleChain forward;
+    forward.rules.push_back(singleRule(Scope::Name, L"a", L"b", MatchType::Literal,
+                                       Occurrence::All).rules[0]);
+    forward.rules.push_back(singleRule(Scope::Name, L"b", L"c", MatchType::Literal,
+                                       Occurrence::All).rules[0]);
+    RuleChain reversed = forward;
+    std::reverse(reversed.rules.begin(), reversed.rules.end());
+
+    CounterState counter;
+    const ItemOutcome forwardOut = Evaluate(item(L"aaa.txt"), forward, 0, counter);
+    CounterState counterReversed;
+    const ItemOutcome reversedOut = Evaluate(item(L"aaa.txt"), reversed, 0, counterReversed);
+
+    CHECK_EQ(forwardOut.targetLeaf, std::wstring(L"ccc.txt"));
+    // Reversed, "a->b" runs last: the batch ends as bbb and never reaches c.
+    CHECK_EQ(reversedOut.targetLeaf, std::wstring(L"bbb.txt"));
+    CHECK(forwardOut.error == RuleError::None);
+}
+
+TEST_CASE(DisabledRuleIsSkipped)
+{
+    RuleChain chain;
+    const Rule disabled = [&] {
+        Rule rule = singleRule(Scope::Name, L"a", L"X", MatchType::Literal,
+                               Occurrence::All).rules[0];
+        rule.enabled = false;
+        return rule;
+    }();
+    chain.rules.push_back(disabled);
+    chain.rules.push_back(singleRule(Scope::Name, L"a", L"Y", MatchType::Literal,
+                                     Occurrence::All).rules[0]);
+
+    CounterState counter;
+    const ItemOutcome out = Evaluate(item(L"aaa.txt"), chain, 0, counter);
+    CHECK_EQ(out.targetLeaf, std::wstring(L"YYY.txt"));
+}
+
+TEST_CASE(RegexCompilesMirrorsReplace)
+{
+    CHECK(RegexCompiles(L"a(b)?c", false));
+    CHECK(RegexCompiles(L"", false));
+    CHECK(!RegexCompiles(L"a(b", true));
+    // Literal search is never a regex: an invalid pattern with regex off is the
+    // caller's business, but the check itself must match ReplaceRegex's flags.
+    CHECK(!RegexCompiles(L"[a-", false));
 }

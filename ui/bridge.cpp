@@ -4,12 +4,17 @@
 // into the presenter, and republishes the result. If a behaviour question ever
 // arises while reading this file, the answer belongs in core/ or presenter.cpp.
 #include "ui/bridge.h"
+#include "ui/presenter.h"
 #include "win/platform.h"
 
 #include <QApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFont>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStringList>
 #include <QStyle>
 
@@ -226,16 +231,149 @@ void PreviewModel::setRows(const std::vector<rename_ui::Row>& rows)
     endResetModel();
 }
 
+// ---- RuleListModel -----------------------------------------------------------
+
+RuleListModel::RuleListModel(QObject* parent) : QAbstractListModel(parent) {}
+
+int RuleListModel::rowCount(const QModelIndex& parent) const
+{
+    return parent.isValid() ? 0 : static_cast<int>(m_rules.size());
+}
+
+QString RuleListModel::summary(const rename_core::Rule& rule) const
+{
+    const bool zh = m_locale.startsWith(QLatin1String("zh"));
+    QString where;
+    switch (rule.scope)
+    {
+    case rename_core::Scope::Name:      where = zh ? QStringLiteral("名称") : QStringLiteral("name"); break;
+    case rename_core::Scope::Extension: where = zh ? QStringLiteral("扩展名") : QStringLiteral("ext"); break;
+    case rename_core::Scope::Full:      where = zh ? QStringLiteral("全名") : QStringLiteral("full"); break;
+    }
+    const QString kind = rule.match == rename_core::MatchType::Regex
+        ? (zh ? QStringLiteral("正则") : QStringLiteral("regex"))
+        : (zh ? QStringLiteral("文本") : QStringLiteral("text"));
+    QString body = ToQt(rule.search);
+    if (!rule.replace.empty())
+        body += QStringLiteral(" → ") + ToQt(rule.replace);
+    if (body.isEmpty())
+        body = zh ? QStringLiteral("(空的)") : QStringLiteral("(empty)");
+    if (body.length() > 40)
+        body = body.left(39) + QStringLiteral("…");
+    return kind + QStringLiteral(" · ") + where + QStringLiteral(" · ") + body;
+}
+
+QVariant RuleListModel::data(const QModelIndex& index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(m_rules.size()))
+        return {};
+    const rename_core::Rule& rule = m_rules[static_cast<std::size_t>(index.row())];
+    switch (role)
+    {
+    case Qt::DisplayRole:
+    case SummaryRole:
+        return summary(rule);
+    case Qt::CheckStateRole:
+        return rule.enabled ? Qt::Checked : Qt::Unchecked;
+    case EnabledRole:
+        return rule.enabled;
+    case ErrorRole:
+        return ruleError(index.row());
+    case Qt::ForegroundRole:
+        // Bad pattern in red, disabled rules faint, everything else in the text
+        // colour; the QListView paints the string it gets from DisplayRole.
+        if (ruleError(index.row()))
+            return QColor(QStringLiteral("#E5484D"));
+        if (!rule.enabled)
+            return QColor(128, 128, 128);
+        return QVariant();
+    case Qt::ToolTipRole:
+        return summary(rule);
+    default:
+        return {};
+    }
+}
+
+bool RuleListModel::setData(const QModelIndex& index, const QVariant& value, int role)
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(m_rules.size()))
+        return false;
+    if (role != Qt::CheckStateRole && role != EnabledRole)
+        return false;
+    const bool enabled = role == Qt::CheckStateRole ? value.toInt() == Qt::Checked : value.toBool();
+    if (m_rules[static_cast<std::size_t>(index.row())].enabled == enabled)
+        return false;
+    emit enabledToggled(index.row(), enabled);
+    return true;
+}
+
+Qt::ItemFlags RuleListModel::flags(const QModelIndex& index) const
+{
+    Qt::ItemFlags flags = QAbstractListModel::flags(index);
+    if (index.isValid())
+        flags |= Qt::ItemIsUserCheckable;
+    return flags;
+}
+
+QHash<int, QByteArray> RuleListModel::roleNames() const
+{
+    return {
+        {SummaryRole, "summary"},
+        {EnabledRole, "enabled"},
+        {ErrorRole, "error"},
+    };
+}
+
+void RuleListModel::setRules(const std::vector<rename_core::Rule>& rules, const QString& locale)
+{
+    beginResetModel();
+    m_rules = rules;
+    m_locale = locale;
+    endResetModel();
+}
+
+bool RuleListModel::ruleError(int index) const
+{
+    if (index < 0 || static_cast<std::size_t>(index) >= m_rules.size())
+        return false;
+    const rename_core::Rule& rule = m_rules[static_cast<std::size_t>(index)];
+    return rule.match == rename_core::MatchType::Regex && !rule.search.empty()
+        && !rename_core::RegexCompiles(rule.search, (rule.flags & rename_core::FlagCaseSensitive) != 0);
+}
+
+bool RuleListModel::ruleEnabled(int index) const
+{
+    return index >= 0 && static_cast<std::size_t>(index) < m_rules.size()
+        && m_rules[static_cast<std::size_t>(index)].enabled;
+}
+
 // ---- Bridge ------------------------------------------------------------------
 
 Bridge::Bridge(QObject* parent) : QObject(parent)
 {
+    // A window opened on nothing still shows one empty rule: the detail editor
+    // has something to bind to, and the first keystroke is an edit rather than
+    // an "add rule" click. An empty search matches nothing in the core, so the
+    // empty default is inert.
+    rename_core::Rule initial;
+    initial.enabled = true;
+    initial.occurrence = rename_core::Occurrence::All;
+    m_chain.rules.push_back(std::move(initial));
+    m_selectedRule = 0;
+
     connect(&m_previewModel, &PreviewModel::selectionChanged, this,
             [this](const QString& id, bool selected) {
                 m_presenter.SetRowSelected(id.toStdString(), selected);
                 emit countsChanged();
                 emit changed();
             });
+    connect(&m_ruleModel, &RuleListModel::enabledToggled, this, [this](int index, bool enabled) {
+        if (index < 0 || static_cast<std::size_t>(index) >= m_chain.rules.size())
+            return;
+        m_chain.rules[static_cast<std::size_t>(index)].enabled = enabled;
+        SyncControlState();
+        emit ruleChanged();
+    });
 }
 
 void Bridge::ApplyAppearance(const QString& locale, bool dark, const QString& uiSize,
@@ -249,6 +387,8 @@ void Bridge::ApplyAppearance(const QString& locale, bool dark, const QString& ui
     m_dark = dark;
     m_uiSize = uiSize.isEmpty() ? QStringLiteral("standard") : uiSize;
     m_look = nativeLook;
+    // The rule summaries are localized strings; repaint them in the new language.
+    m_ruleModel.setRules(m_chain.rules, m_locale);
 
     const bool isDark = m_dark;
     m_previewModel.setLocale(m_locale);
@@ -347,19 +487,37 @@ bool Bridge::allSelected() const
     return true;
 }
 
+bool Bridge::ruleCaseSensitive() const
+{
+    return (m_flags & rename_core::FlagCaseSensitive) != 0;
+}
+
+void Bridge::setRuleCaseSensitive(bool caseSensitive)
+{
+    if (caseSensitive == ruleCaseSensitive())
+        return;
+    if (caseSensitive)
+        m_flags |= rename_core::FlagCaseSensitive;
+    else
+        m_flags &= ~static_cast<std::uint32_t>(rename_core::FlagCaseSensitive);
+    SyncControlState();
+    emit ruleChanged();
+    emit changed();
+    emit countsChanged();
+}
+
 bool Bridge::ruleRegexInvalid() const
 {
     // "Regex" is on and the pattern does not compile: the field turns red before
     // the user presses anything, which is the only useful time to say so. A bad
-    // pattern surfaces as a bad-rule row, so the plan is what to ask.
-    if (m_ruleMatch != 1 || m_ruleFind.isEmpty())
+    // pattern surfaces as bad-rule rows, so the plan is what to ask.
+    const int index = m_selectedRule;
+    if (index < 0 || static_cast<std::size_t>(index) >= m_chain.rules.size())
         return false;
-    for (const rename_core::PlanItem& item : m_presenter.Plan().items)
-    {
-        if (item.status == rename_core::Status::ErrorBadRule)
-            return true;
-    }
-    return false;
+    const rename_core::Rule& rule = m_chain.rules[static_cast<std::size_t>(index)];
+    if (rule.match != rename_core::MatchType::Regex || rule.search.empty())
+        return false;
+    return !rename_core::RegexCompiles(rule.search, (rule.flags & rename_core::FlagCaseSensitive) != 0);
 }
 
 QString Bridge::filter() const
@@ -623,6 +781,27 @@ void Bridge::selectAll(bool selected)
     emit changed();
 }
 
+namespace {
+
+rename_core::Rule RuleFrom(int scope, int match, const std::wstring& find, const std::wstring& replace,
+                           bool enabled, bool matchAll, std::uint32_t batchFlags)
+{
+    rename_core::Rule rule;
+    rule.enabled = enabled;
+    rule.scope = (scope == 1) ? rename_core::Scope::Extension
+                              : (scope == 2 ? rename_core::Scope::Full : rename_core::Scope::Name);
+    rule.match = (match == 1) ? rename_core::MatchType::Regex : rename_core::MatchType::Literal;
+    rule.occurrence = matchAll ? rename_core::Occurrence::All : rename_core::Occurrence::First;
+    rule.search = find;
+    rule.replace = replace;
+    // Case sensitivity is a flag on the whole batch, as PowerRename's checkbox is
+    // (not per rule): one batch compares names one way.
+    rule.flags = batchFlags & rename_core::FlagCaseSensitive;
+    return rule;
+}
+
+} // namespace
+
 void Bridge::setCaseTransform(int which)
 {
     // A case transform is a batch-level flag in the core, not a rule: it applies
@@ -631,9 +810,8 @@ void Bridge::setCaseTransform(int which)
     const std::uint32_t all = rename_core::FlagUppercase | rename_core::FlagLowercase
                             | rename_core::FlagTitleCase | rename_core::FlagCapitalize;
 
-    rename_ui::ControlState state = m_presenter.ControlStateRef();
-    const std::uint32_t previous = state.flags & all;
-    state.flags &= ~all;
+    const std::uint32_t previous = m_flags & all;
+    m_flags &= ~all;
 
     std::uint32_t wanted = 0;
     switch (which)
@@ -645,75 +823,312 @@ void Bridge::setCaseTransform(int which)
     default: break;
     }
     if (wanted != 0 && previous != wanted)
-        state.flags |= wanted;
+        m_flags |= wanted;
 
-    m_caseTransform = (wanted != 0 && previous != wanted)
-        ? which
-        : 0;
+    m_caseTransform = (wanted != 0 && previous != wanted) ? which : 0;
 
-    m_presenter.SetControlState(std::move(state));
-    PublishRows();
+    SyncControlState();
     emit ruleChanged();
     emit changed();
     emit countsChanged();
 }
 
-void Bridge::setRule(int scope, int match, const QString& find, const QString& replace,
-                     bool enabled, bool matchAll, bool caseSensitive)
+void Bridge::SyncControlState()
 {
-    m_ruleScope = scope;
-    m_ruleMatch = match;
-    m_ruleFind = find;
-    m_ruleReplace = replace;
-    m_ruleEnabled = enabled;
-    m_ruleMatchAll = matchAll;
-    m_ruleCaseSensitive = caseSensitive;
-
-    rename_ui::ControlState state = m_presenter.ControlStateRef();
-    state.chain.rules.clear();
-
-    rename_core::Rule rule;
-    rule.enabled = enabled;
-    rule.scope = (scope == 1) ? rename_core::Scope::Extension
-                              : (scope == 2 ? rename_core::Scope::Full : rename_core::Scope::Name);
-    rule.match = (match == 1) ? rename_core::MatchType::Regex : rename_core::MatchType::Literal;
-    rule.occurrence = matchAll ? rename_core::Occurrence::All : rename_core::Occurrence::First;
-    rule.search = FromQt(find);
-    rule.replace = FromQt(replace);
-    // An empty find is "no rule", not "match everything": the latter would make
-    // a half-typed query rewrite every name.
-    if (enabled && !rule.search.empty())
-        state.chain.rules.push_back(std::move(rule));
-
-    // Case sensitivity is a flag on the whole batch, as PowerRename's checkbox is
-    // (not per rule): one batch compares names one way.
-    if (caseSensitive)
-        state.flags |= rename_core::FlagCaseSensitive;
-    else
-        state.flags &= ~static_cast<std::uint32_t>(rename_core::FlagCaseSensitive);
-
+    rename_ui::ControlState state;
+    state.chain = m_chain;
+    state.flags = m_flags;
     m_presenter.SetControlState(std::move(state));
+    m_ruleModel.setRules(m_chain.rules, m_locale);
     PublishRows();
-    emit ruleChanged();
     emit changed();
     emit countsChanged();
 }
 
-void Bridge::setScope(int scope)
+QVariantMap Bridge::ruleAt(int index) const
 {
-    if (scope == m_ruleScope)
+    QVariantMap map;
+    if (index < 0 || static_cast<std::size_t>(index) >= m_chain.rules.size())
+        return map;
+    const rename_core::Rule& rule = m_chain.rules[static_cast<std::size_t>(index)];
+    map.insert(QStringLiteral("scope"), rule.scope == rename_core::Scope::Extension ? 1
+                                   : rule.scope == rename_core::Scope::Full ? 2 : 0);
+    map.insert(QStringLiteral("match"), rule.match == rename_core::MatchType::Regex ? 1 : 0);
+    map.insert(QStringLiteral("matchAll"), rule.occurrence == rename_core::Occurrence::All);
+    map.insert(QStringLiteral("find"), ToQt(rule.search));
+    map.insert(QStringLiteral("replace"), ToQt(rule.replace));
+    map.insert(QStringLiteral("enabled"), rule.enabled);
+    map.insert(QStringLiteral("error"), m_ruleModel.ruleError(index));
+    return map;
+}
+
+void Bridge::setRuleAt(int index, int scope, int match, const QString& find,
+                       const QString& replace, bool enabled, bool matchAll)
+{
+    if (index < 0 || static_cast<std::size_t>(index) >= m_chain.rules.size())
         return;
-    m_ruleScope = scope;
-    // Reapply with the text the fields hold: the three buttons only change where
-    // the rule looks, never what it looks for.
-    setRule(m_ruleScope, m_ruleMatch, m_ruleFind, m_ruleReplace, m_ruleEnabled,
-            m_ruleMatchAll, m_ruleCaseSensitive);
+    m_chain.rules[static_cast<std::size_t>(index)] =
+        RuleFrom(scope, match, FromQt(find), FromQt(replace), enabled, matchAll, m_flags);
+    SyncControlState();
+    emit ruleChanged();
+}
+
+void Bridge::selectRule(int index)
+{
+    const int clamped = (index >= 0 && index < ruleCount()) ? index : -1;
+    if (clamped == m_selectedRule)
+        return;
+    m_selectedRule = clamped;
+    emit ruleChanged();
+}
+
+int Bridge::addRule()
+{
+    rename_core::Rule rule;
+    rule.enabled = true;
+    rule.occurrence = rename_core::Occurrence::All;
+    rule.flags = m_flags & rename_core::FlagCaseSensitive;
+    m_chain.rules.push_back(std::move(rule));
+    m_selectedRule = ruleCount() - 1;
+    SyncControlState();
+    emit ruleChanged();
+    return m_selectedRule;
+}
+
+void Bridge::duplicateRule(int index)
+{
+    if (index < 0 || static_cast<std::size_t>(index) >= m_chain.rules.size())
+        return;
+    m_chain.rules.insert(m_chain.rules.begin() + index + 1,
+                         m_chain.rules[static_cast<std::size_t>(index)]);
+    m_selectedRule = index + 1;
+    SyncControlState();
+    emit ruleChanged();
+}
+
+void Bridge::removeRule(int index)
+{
+    if (index < 0 || static_cast<std::size_t>(index) >= m_chain.rules.size())
+        return;
+    m_chain.rules.erase(m_chain.rules.begin() + index);
+    if (m_selectedRule >= ruleCount())
+        m_selectedRule = ruleCount() - 1;
+    SyncControlState();
+    emit ruleChanged();
+}
+
+void Bridge::moveRule(int from, int to)
+{
+    const int count = ruleCount();
+    if (from < 0 || from >= count || to < 0 || to >= count || from == to)
+        return;
+    rename_core::Rule rule = m_chain.rules[static_cast<std::size_t>(from)];
+    m_chain.rules.erase(m_chain.rules.begin() + from);
+    m_chain.rules.insert(m_chain.rules.begin() + to, std::move(rule));
+    if (m_selectedRule == from)
+        m_selectedRule = to;
+    SyncControlState();
+    emit ruleChanged();
+}
+
+// ---- presets -----------------------------------------------------------------
+//
+// A preset is a named chain plus the batch flags it was saved with. The file is
+// <dataDir>/presets.json; the first read seeds three built-ins so the menu is
+// never empty.
+
+namespace {
+
+const wchar_t* const kPresetSpaceUnderscore[] = {L" ", L"_", nullptr};
+const wchar_t* const kPresetTrimSpaces[] = {L"\\s+", L" ", nullptr};
+const wchar_t* const kPresetNumber[] = {L"^", L"${start=1,increment=1,padding=3}-", nullptr};
+
+} // namespace
+
+void Bridge::LoadPresets() const
+{
+    m_presetsLoaded = true;
+    m_presets.clear();
+
+    const QString path = QDir::cleanPath(ToQt(m_dataDir) + QStringLiteral("/presets.json"));
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly))
+    {
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        const QJsonArray array = doc.object().value(QStringLiteral("presets")).toArray();
+        for (const QJsonValue& value : array)
+        {
+            const QJsonObject obj = value.toObject();
+            Preset preset;
+            preset.name = obj.value(QStringLiteral("name")).toString();
+            preset.flags = static_cast<std::uint32_t>(
+                obj.value(QStringLiteral("flags")).toInt());
+            const QJsonArray rules = obj.value(QStringLiteral("rules")).toArray();
+            for (const QJsonValue& ruleValue : rules)
+            {
+                const QJsonObject ruleObj = ruleValue.toObject();
+                rename_core::Rule rule;
+                rule.enabled = ruleObj.value(QStringLiteral("enabled")).toBool(true);
+                const QString scope = ruleObj.value(QStringLiteral("scope")).toString();
+                rule.scope = scope == QStringLiteral("extension") ? rename_core::Scope::Extension
+                           : scope == QStringLiteral("full") ? rename_core::Scope::Full
+                           : rename_core::Scope::Name;
+                rule.match = ruleObj.value(QStringLiteral("match")).toString()
+                             == QStringLiteral("regex")
+                             ? rename_core::MatchType::Regex : rename_core::MatchType::Literal;
+                rule.occurrence = ruleObj.value(QStringLiteral("occurrence")).toString()
+                                  == QStringLiteral("first")
+                                  ? rename_core::Occurrence::First : rename_core::Occurrence::All;
+                rule.search = FromQt(ruleObj.value(QStringLiteral("search")).toString());
+                rule.replace = FromQt(ruleObj.value(QStringLiteral("replace")).toString());
+                preset.chain.rules.push_back(std::move(rule));
+            }
+            if (!preset.name.isEmpty() && !preset.chain.rules.empty())
+                m_presets.push_back(std::move(preset));
+        }
+        if (!m_presets.empty())
+            return;
+    }
+
+    // Seed the built-ins: three one-rule chains that cover the most common asks.
+    auto seed = [this](const QString& name, const wchar_t* const* parts, int scope, int match) {
+        Preset preset;
+        preset.name = name;
+        preset.chain.rules.push_back(
+            RuleFrom(scope, match, parts[0], parts[1], true, /*matchAll=*/true, 0));
+        m_presets.push_back(std::move(preset));
+    };
+    seed(QStringLiteral("空格 → 下划线"), kPresetSpaceUnderscore, 0, 0);
+    seed(QStringLiteral("合并连续空格"), kPresetTrimSpaces, 0, 1);
+    seed(QStringLiteral("编号 001-"), kPresetNumber, 2, 1);
+    StorePresets();
+}
+
+void Bridge::StorePresets() const
+{
+    if (m_dataDir.empty())
+        return;
+    QJsonArray array;
+    for (const Preset& preset : m_presets)
+    {
+        QJsonObject obj;
+        obj.insert(QStringLiteral("name"), preset.name);
+        obj.insert(QStringLiteral("flags"), static_cast<int>(preset.flags));
+        QJsonArray rules;
+        for (const rename_core::Rule& rule : preset.chain.rules)
+        {
+            QJsonObject ruleObj;
+            ruleObj.insert(QStringLiteral("enabled"), rule.enabled);
+            ruleObj.insert(QStringLiteral("scope"),
+                           rule.scope == rename_core::Scope::Extension ? QStringLiteral("extension")
+                           : rule.scope == rename_core::Scope::Full ? QStringLiteral("full")
+                           : QStringLiteral("name"));
+            ruleObj.insert(QStringLiteral("match"),
+                           rule.match == rename_core::MatchType::Regex ? QStringLiteral("regex")
+                           : QStringLiteral("literal"));
+            ruleObj.insert(QStringLiteral("occurrence"),
+                           rule.occurrence == rename_core::Occurrence::First
+                           ? QStringLiteral("first") : QStringLiteral("all"));
+            ruleObj.insert(QStringLiteral("search"), ToQt(rule.search));
+            ruleObj.insert(QStringLiteral("replace"), ToQt(rule.replace));
+            rules.append(ruleObj);
+        }
+        obj.insert(QStringLiteral("rules"), rules);
+        array.append(obj);
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("presets"), array);
+    QDir().mkpath(ToQt(m_dataDir));
+    QFile file(QDir::cleanPath(ToQt(m_dataDir) + QStringLiteral("/presets.json")));
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+}
+
+QStringList Bridge::presetNames() const
+{
+    if (!m_presetsLoaded)
+        LoadPresets();
+    QStringList names;
+    for (const Preset& preset : m_presets)
+        names << preset.name;
+    return names;
+}
+
+void Bridge::loadPreset(const QString& name)
+{
+    if (!m_presetsLoaded)
+        LoadPresets();
+    for (const Preset& preset : m_presets)
+    {
+        if (preset.name != name)
+            continue;
+        m_chain = preset.chain;
+        m_flags = preset.flags;
+        m_caseTransform = (m_flags & rename_core::FlagLowercase) ? 1
+                        : (m_flags & rename_core::FlagUppercase) ? 2
+                        : (m_flags & rename_core::FlagCapitalize) ? 3
+                        : (m_flags & rename_core::FlagTitleCase) ? 4 : 0;
+        m_selectedRule = ruleCount() > 0 ? 0 : -1;
+        SyncControlState();
+        emit ruleChanged();
+        return;
+    }
+}
+
+bool Bridge::savePreset(const QString& name)
+{
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || m_chain.rules.empty() || m_dataDir.empty())
+        return false;
+    if (!m_presetsLoaded)
+        LoadPresets();
+    for (Preset& preset : m_presets)
+    {
+        if (preset.name == trimmed)
+        {
+            preset.chain = m_chain;
+            preset.flags = m_flags;
+            StorePresets();
+            return true;
+        }
+    }
+    Preset preset;
+    preset.name = trimmed;
+    preset.chain = m_chain;
+    preset.flags = m_flags;
+    m_presets.push_back(std::move(preset));
+    StorePresets();
+    return true;
+}
+
+void Bridge::deletePreset(const QString& name)
+{
+    if (!m_presetsLoaded)
+        LoadPresets();
+    for (auto it = m_presets.begin(); it != m_presets.end(); ++it)
+    {
+        if (it->name == name)
+        {
+            m_presets.erase(it);
+            StorePresets();
+            return;
+        }
+    }
 }
 
 void Bridge::setSingleRule(int scope, int match, const QString& find,
                            const QString& replace, bool enabled)
 {
-    setRule(scope, match, find, replace, enabled, /*matchAll=*/true, /*caseSensitive=*/false);
+    // The grab hook's one-rule form: the whole chain becomes this single rule.
+    m_chain.rules.clear();
+    m_chain.rules.push_back(
+        RuleFrom(scope, match, FromQt(find), FromQt(replace), enabled,
+                 /*matchAll=*/true, m_flags));
+    m_selectedRule = ruleCount() - 1;
+    SyncControlState();
+    emit ruleChanged();
 }
 
 bool Bridge::apply()

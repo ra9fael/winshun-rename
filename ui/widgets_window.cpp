@@ -18,12 +18,14 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
+#include <QListView>
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QStyledItemDelegate>
@@ -277,6 +279,103 @@ private:
     const Theme* m_theme = nullptr;
 };
 
+// Paints the "renamed" column with the changed span highlighted: the text the
+// rules kept is drawn faintly, the span between the first and last difference is
+// drawn in the accent colour. A common-prefix/suffix walk is all this needs —
+// anything smarter cannot survive a window that repaints on every keystroke.
+class TargetDelegate : public QStyledItemDelegate
+{
+public:
+    explicit TargetDelegate(const Theme* theme, QObject* parent = nullptr)
+        : QStyledItemDelegate(parent)
+        , m_theme(theme)
+    {
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        if (!m_theme)
+            return;
+
+        painter->save();
+        if (option.state & (QStyle::State_Selected | QStyle::State_MouseOver))
+            painter->fillRect(option.rect, m_theme->hover);
+
+        const QString original = index.data(rename_qml::PreviewModel::OriginalRole).toString();
+        const QString target = index.data(rename_qml::PreviewModel::TargetRole).toString();
+        const int status = index.data(rename_qml::PreviewModel::StatusRole).toInt();
+        const bool skipped = index.data(rename_qml::PreviewModel::SkippedRole).toBool();
+        const bool error = status == static_cast<int>(rename_core::Status::ErrorAlreadyExists)
+                        || status == static_cast<int>(rename_core::Status::ErrorTooLong)
+                        || status == static_cast<int>(rename_core::Status::ErrorInvalidCharacter)
+                        || status == static_cast<int>(rename_core::Status::ErrorEmptyName)
+                        || status == static_cast<int>(rename_core::Status::ErrorBadRule);
+        const bool unchanged = status == static_cast<int>(rename_core::Status::Unchanged);
+        const bool ready = status == static_cast<int>(rename_core::Status::Ready);
+
+        QColor plain = error ? m_theme->danger
+                      : skipped ? m_theme->subtext
+                      : unchanged ? m_theme->faint
+                      : m_theme->text;
+        QColor highlight = error ? m_theme->danger
+                         : skipped ? m_theme->subtext
+                         : m_theme->accent;
+
+        QFont font = option.font;
+        if (ready && !error && !skipped)
+            font.setBold(true);
+        painter->setFont(font);
+        painter->setClipRect(option.rect);
+
+        // Only a row that will actually rename gets the two-colour treatment.
+        const bool changed = ready && target != original;
+        int prefix = 0;
+        int suffix = 0;
+        if (changed)
+        {
+            while (prefix < original.length() && prefix < target.length()
+                   && original[prefix] == target[prefix])
+                ++prefix;
+            while (suffix < original.length() - prefix && suffix < target.length() - prefix
+                   && original[original.length() - 1 - suffix] == target[target.length() - 1 - suffix])
+                ++suffix;
+        }
+
+        const int flags = Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine;
+        const int midStart = prefix;
+        const int midEnd = target.length() - suffix;
+        if (!changed || midEnd <= midStart)
+        {
+            painter->setPen(plain);
+            painter->drawText(option.rect.adjusted(2, 0, -4, 0), flags, target);
+            painter->restore();
+            return;
+        }
+
+        const QFontMetrics metrics(font);
+        int x = option.rect.left() + 2;
+        const int y = option.rect.top() + (option.rect.height() + metrics.ascent() - metrics.descent()) / 2
+                    - metrics.ascent();
+
+        auto drawSpan = [&](const QString& text, const QColor& colour) {
+            if (text.isEmpty())
+                return;
+            painter->setPen(colour);
+            painter->drawText(QPoint(x, y + metrics.ascent()), text);
+            x += metrics.horizontalAdvance(text);
+        };
+
+        drawSpan(target.left(midStart), plain);
+        drawSpan(target.mid(midStart, midEnd - midStart), highlight);
+        drawSpan(target.mid(midEnd), plain);
+        painter->restore();
+    }
+
+private:
+    const Theme* m_theme = nullptr;
+};
+
 } // namespace
 
 Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
@@ -413,11 +512,77 @@ void Window::BuildUi()
     control->setContentsMargins(0, 0, 0, 0);
     control->setSpacing(0);
 
+    // ---- presets -----------------------------------------------------------
+    auto* presetRow = new QHBoxLayout;
+    presetRow->setContentsMargins(0, 0, 0, 0);
+    presetRow->setSpacing(6);
+    m_preset = new ComboBox(m_theme, controlPage);
+    m_preset->setToolTip(T("载入预设", "Load a preset"));
+    m_preset->setFixedHeight(30);
+    presetRow->addWidget(m_preset, 1);
+    m_presetSave = new QToolButton(controlPage);
+    m_presetSave->setText(T("存", "Save"));
+    m_presetSave->setObjectName(QStringLiteral("chipButton"));
+    m_presetSave->setToolTip(T("把当前规则链存为预设", "Save the current chain as a preset"));
+    m_presetSave->setFixedHeight(30);
+    presetRow->addWidget(m_presetSave);
+    m_presetDelete = new QToolButton(controlPage);
+    m_presetDelete->setText(T("删", "Del"));
+    m_presetDelete->setObjectName(QStringLiteral("chipButton"));
+    m_presetDelete->setToolTip(T("删除选中的预设", "Delete the selected preset"));
+    m_presetDelete->setFixedHeight(30);
+    presetRow->addWidget(m_presetDelete);
+    control->addLayout(presetRow);
+    control->addSpacing(9);
+
+    // ---- rule chain list ----------------------------------------------------
+    m_ruleList = new QListView(controlPage);
+    m_ruleList->setModel(m_bridge->ruleModel());
+    m_ruleList->setFrameShape(QFrame::NoFrame);
+    m_ruleList->setAlternatingRowColors(false);
+    m_ruleList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_ruleList->setUniformItemSizes(true);
+    m_ruleList->setFixedHeight(88);
+    m_ruleList->setObjectName(QStringLiteral("ruleList"));
+    control->addWidget(m_ruleList);
+    control->addSpacing(6);
+
+    auto* ruleButtons = new QHBoxLayout;
+    ruleButtons->setContentsMargins(0, 0, 0, 0);
+    ruleButtons->setSpacing(5);
+    const auto makeRuleButton = [this, controlPage, &ruleButtons](const QString& text, const QString& tip) {
+        auto* button = new QToolButton(controlPage);
+        button->setText(text);
+        button->setToolTip(tip);
+        button->setObjectName(QStringLiteral("chipButton"));
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFixedHeight(26);
+        ruleButtons->addWidget(button);
+        return button;
+    };
+    m_ruleAdd = makeRuleButton(T("添加", "Add"), T("添加一条规则", "Add a rule"));
+    m_ruleDup = makeRuleButton(T("复制", "Copy"), T("复制选中的规则", "Duplicate the selected rule"));
+    m_ruleUp = makeRuleButton(T("上移", "Up"), T("把选中的规则上移一位", "Move the selected rule up"));
+    m_ruleDown = makeRuleButton(T("下移", "Down"), T("把选中的规则下移一位", "Move the selected rule down"));
+    m_ruleRemove = makeRuleButton(T("删除", "Remove"), T("删除选中的规则", "Remove the selected rule"));
+    ruleButtons->addStretch(1);
+    control->addLayout(ruleButtons);
+    control->addSpacing(10);
+
+    control->addWidget(Divider(Qt::Horizontal, controlPage));
+    control->addSpacing(10);
+
+    // ---- detail editor for the selected rule ---------------------------------
     m_find = new QLineEdit(controlPage);
     m_find->setPlaceholderText(T("查找", "Find"));
     m_find->setClearButtonEnabled(true);
     control->addWidget(m_find);
-    control->addSpacing(9);
+    control->addSpacing(7);
+
+    m_replace = new QLineEdit(controlPage);
+    m_replace->setPlaceholderText(T("替换为", "Replace with"));
+    control->addWidget(m_replace);
+    control->addSpacing(7);
 
     m_regex = new CheckBox(m_theme, controlPage);
     m_regex->setText(T("使用正则表达式", "Use regular expressions"));
@@ -431,17 +596,9 @@ void Window::BuildUi()
     control->addSpacing(7);
     control->addWidget(m_caseSensitive);
 
-    control->addSpacing(14);
-    control->addWidget(Divider(Qt::Horizontal, controlPage));
-    control->addSpacing(14);
-
-    m_replace = new QLineEdit(controlPage);
-    m_replace->setPlaceholderText(T("替换为", "Replace with"));
-    control->addWidget(m_replace);
-
     m_scopeLabel = new QLabel(T("应用于", "Apply to"), controlPage);
     m_scopeLabel->setObjectName(QStringLiteral("caption"));
-    control->addSpacing(14);
+    control->addSpacing(12);
     control->addWidget(m_scopeLabel);
     control->addSpacing(5);
 
@@ -577,6 +734,7 @@ void Window::BuildUi()
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
     m_table->setItemDelegateForColumn(0, new CheckDelegate(m_theme, m_table));
+    m_table->setItemDelegateForColumn(2, new TargetDelegate(m_theme, m_table));
     m_tableStack->addWidget(m_table);
 
     m_empty = new QLabel(m_tableStack);
@@ -657,7 +815,10 @@ void Window::ConnectBridge()
 {
     connect(m_bridge, &rename_qml::Bridge::changed, this, &Window::RefreshAll);
     connect(m_bridge, &rename_qml::Bridge::countsChanged, this, &Window::RefreshCounts);
-    connect(m_bridge, &rename_qml::Bridge::ruleChanged, this, &Window::SyncRuleFields);
+    connect(m_bridge, &rename_qml::Bridge::ruleChanged, this, [this] {
+        SyncRuleFields();
+        RefreshRuleList();
+    });
     connect(m_bridge, &rename_qml::Bridge::appearanceChanged, this, &Window::ApplyAppearance);
 
     m_ruleTimer = new QTimer(this);
@@ -692,10 +853,79 @@ void Window::ConnectBridge()
 
     connect(m_regex, &QCheckBox::toggled, this, [this] { if (!m_syncing) PushRule(); });
     connect(m_matchAll, &QCheckBox::toggled, this, [this] { if (!m_syncing) PushRule(); });
-    connect(m_caseSensitive, &QCheckBox::toggled, this, [this] { if (!m_syncing) PushRule(); });
-    connect(m_scope, &QComboBox::currentIndexChanged, this, [this](int index) {
+    connect(m_caseSensitive, &QCheckBox::toggled, this, [this](bool checked) {
         if (!m_syncing)
-            m_bridge->setScope(index);
+            m_bridge->setRuleCaseSensitive(checked);
+    });
+    connect(m_scope, &QComboBox::currentIndexChanged, this, [this](int) {
+        if (!m_syncing)
+            PushRule();
+    });
+
+    // ---- rule chain ----------------------------------------------------------
+    connect(m_ruleList->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+            [this](const QModelIndex& current, const QModelIndex&) {
+                if (!m_syncing)
+                    m_bridge->selectRule(current.isValid() ? current.row() : -1);
+            });
+    connect(m_ruleAdd, &QToolButton::clicked, this, [this] {
+        m_bridge->addRule();
+        SyncRuleSelection();
+        SyncRuleFields();
+    });
+    connect(m_ruleDup, &QToolButton::clicked, this, [this] {
+        m_bridge->duplicateRule(m_bridge->selectedRule());
+        SyncRuleSelection();
+        SyncRuleFields();
+    });
+    connect(m_ruleRemove, &QToolButton::clicked, this, [this] {
+        m_bridge->removeRule(m_bridge->selectedRule());
+        SyncRuleSelection();
+        SyncRuleFields();
+    });
+    connect(m_ruleUp, &QToolButton::clicked, this, [this] {
+        const int index = m_bridge->selectedRule();
+        m_bridge->moveRule(index, index - 1);
+        SyncRuleSelection();
+    });
+    connect(m_ruleDown, &QToolButton::clicked, this, [this] {
+        const int index = m_bridge->selectedRule();
+        m_bridge->moveRule(index, index + 1);
+        SyncRuleSelection();
+    });
+
+    // ---- presets -------------------------------------------------------------
+    connect(m_presetSave, &QToolButton::clicked, this, [this] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            this, T("保存预设", "Save preset"),
+            T("预设名称", "Preset name"), QLineEdit::Normal,
+            m_preset->currentText(), &ok);
+        if (!ok || name.trimmed().isEmpty())
+            return;
+        if (!m_bridge->savePreset(name.trimmed()))
+            return;
+        RefreshPresets();
+        m_preset->setCurrentText(name.trimmed());
+    });
+    connect(m_presetDelete, &QToolButton::clicked, this, [this] {
+        const QString name = m_preset->currentText();
+        if (name.isEmpty())
+            return;
+        m_bridge->deletePreset(name);
+        RefreshPresets();
+    });
+    connect(m_preset, &QComboBox::activated, this, [this](int index) {
+        if (index <= 0 || m_syncing)
+            return;
+        // Index 0 is the placeholder row; a preset row loads and the combo then
+        // returns to the placeholder so the same preset can be re-picked.
+        m_bridge->loadPreset(m_preset->itemText(index));
+        SyncRuleSelection();
+        SyncRuleFields();
+        m_syncing = true;
+        m_preset->setCurrentIndex(0);
+        m_syncing = false;
     });
     connect(m_filter, &QComboBox::currentIndexChanged, this, [this](int index) {
         if (m_syncing)
@@ -730,28 +960,90 @@ void Window::SyncRuleFields()
     if (!m_bridge)
         return;
 
+    const int index = m_bridge->selectedRule();
+    const bool hasRule = index >= 0 && index < m_bridge->ruleCount();
+    const QVariantMap rule = hasRule ? m_bridge->ruleAt(index) : QVariantMap();
+
+    // The detail editor edits the selected rule only; with no rules there is
+    // nothing to bind, so the fields go dark rather than lying about a rule.
+    for (QWidget* widget : std::initializer_list<QWidget*>{
+             m_find, m_replace, m_regex, m_matchAll, m_caseSensitive, m_scope, m_scopeLabel})
+        widget->setEnabled(hasRule);
+    m_ruleDup->setEnabled(hasRule);
+    m_ruleUp->setEnabled(hasRule && index > 0);
+    m_ruleDown->setEnabled(hasRule && index < m_bridge->ruleCount() - 1);
+    m_ruleRemove->setEnabled(hasRule);
+    m_presetSave->setEnabled(m_bridge->ruleCount() > 0);
+
     m_syncing = true;
-    // Never overwrite a field the user is typing into: a countsChanged while a
-    // debounce is pending would otherwise restore the previous rule text.
-    if (!m_find->hasFocus() && m_find->text() != m_bridge->ruleFind())
-        m_find->setText(m_bridge->ruleFind());
-    if (!m_replace->hasFocus() && m_replace->text() != m_bridge->ruleReplace())
-        m_replace->setText(m_bridge->ruleReplace());
-    m_regex->setChecked(m_bridge->ruleMatch() == 1);
-    m_matchAll->setChecked(m_bridge->ruleMatchAll());
-    m_caseSensitive->setChecked(m_bridge->ruleCaseSensitive());
-    m_scope->setCurrentIndex(qBound(0, m_bridge->ruleScope(), 2));
+    if (hasRule)
+    {
+        const QString find = rule.value(QStringLiteral("find")).toString();
+        const QString replace = rule.value(QStringLiteral("replace")).toString();
+        // Never overwrite a field the user is typing into: a countsChanged while
+        // a debounce is pending would otherwise restore the previous rule text.
+        if (!m_find->hasFocus() && m_find->text() != find)
+            m_find->setText(find);
+        if (!m_replace->hasFocus() && m_replace->text() != replace)
+            m_replace->setText(replace);
+        m_regex->setChecked(rule.value(QStringLiteral("match")).toInt() == 1);
+        m_matchAll->setChecked(rule.value(QStringLiteral("matchAll")).toBool());
+        m_caseSensitive->setChecked(m_bridge->ruleCaseSensitive());
+        m_scope->setCurrentIndex(qBound(0, rule.value(QStringLiteral("scope")).toInt(), 2));
+    }
     for (int i = 0; i < 4; ++i)
         m_caseButtons[i]->setChecked(m_bridge->caseTransform() == i + 1);
     m_syncing = false;
 
-    const bool invalid = m_bridge->ruleRegexInvalid();
+    const bool invalid = hasRule && m_bridge->ruleRegexInvalid();
     if (m_find->property("invalid").toBool() != invalid)
     {
         m_find->setProperty("invalid", invalid);
         m_find->style()->unpolish(m_find);
         m_find->style()->polish(m_find);
     }
+}
+
+void Window::SyncRuleSelection()
+{
+    if (!m_bridge || !m_ruleList)
+        return;
+    const int index = m_bridge->selectedRule();
+    m_syncing = true;
+    if (index < 0)
+        m_ruleList->clearSelection();
+    else
+    {
+        const QModelIndex modelIndex = m_ruleList->model()->index(index, 0);
+        m_ruleList->setCurrentIndex(modelIndex);
+    }
+    m_syncing = false;
+}
+
+void Window::RefreshPresets()
+{
+    if (!m_bridge || !m_preset)
+        return;
+    m_syncing = true;
+    m_preset->clear();
+    m_preset->addItem(T("预设…", "Preset…"));
+    m_preset->addItems(m_bridge->presetNames());
+    m_preset->setCurrentIndex(0);
+    m_syncing = false;
+}
+
+void Window::RefreshRuleList()
+{
+    // The rule model resets on every chain edit, which drops the view's current
+    // index; put it back where the bridge says it belongs.
+    if (!m_bridge || !m_ruleList)
+        return;
+    const int index = m_bridge->selectedRule();
+    const QModelIndex current = m_ruleList->currentIndex();
+    const int currentIndex = current.isValid() ? current.row() : -1;
+    if (currentIndex != index)
+        SyncRuleSelection();
+    RefreshPresets();
 }
 
 void Window::SyncTextEditor()
@@ -860,9 +1152,15 @@ void Window::PushRule()
 {
     if (!m_bridge || m_syncing)
         return;
-    m_bridge->setRule(m_scope->currentIndex(), m_regex->isChecked() ? 1 : 0,
-                      m_find->text(), m_replace->text(), true,
-                      m_matchAll->isChecked(), m_caseSensitive->isChecked());
+    const int index = m_bridge->selectedRule();
+    if (index < 0)
+        return;
+    // Keep the row's enabled flag: the list checkbox owns it, not the editor.
+    const QVariantMap rule = m_bridge->ruleAt(index);
+    m_bridge->setRuleAt(index, m_scope->currentIndex(), m_regex->isChecked() ? 1 : 0,
+                        m_find->text(), m_replace->text(),
+                        rule.value(QStringLiteral("enabled")).toBool(),
+                        m_matchAll->isChecked());
 }
 
 void Window::RequestMode(const QString& target)
@@ -894,6 +1192,7 @@ void Window::RefreshAll()
     if (!m_bridge)
         return;
     SyncRuleFields();
+    RefreshRuleList();
     RefreshMode();
     RefreshCounts();
     RefreshEmptyState();
@@ -917,6 +1216,23 @@ void Window::Retranslate()
     m_browse->setToolTip(T("选择目录", "Choose a folder"));
     m_reload->setText(T("刷新", "Refresh"));
     m_reload->setToolTip(T("重新读取这个文件夹", "Reload this folder"));
+
+    m_preset->setItemText(0, T("预设…", "Preset…"));
+    m_preset->setToolTip(T("载入预设", "Load a preset"));
+    m_presetSave->setText(T("存", "Save"));
+    m_presetSave->setToolTip(T("把当前规则链存为预设", "Save the current chain as a preset"));
+    m_presetDelete->setText(T("删", "Del"));
+    m_presetDelete->setToolTip(T("删除选中的预设", "Delete the selected preset"));
+    m_ruleAdd->setText(T("添加", "Add"));
+    m_ruleAdd->setToolTip(T("添加一条规则", "Add a rule"));
+    m_ruleDup->setText(T("复制", "Copy"));
+    m_ruleDup->setToolTip(T("复制选中的规则", "Duplicate the selected rule"));
+    m_ruleUp->setText(T("上移", "Up"));
+    m_ruleUp->setToolTip(T("把选中的规则上移一位", "Move the selected rule up"));
+    m_ruleDown->setText(T("下移", "Down"));
+    m_ruleDown->setToolTip(T("把选中的规则下移一位", "Move the selected rule down"));
+    m_ruleRemove->setText(T("删除", "Remove"));
+    m_ruleRemove->setToolTip(T("删除选中的规则", "Remove the selected rule"));
 
     m_find->setPlaceholderText(T("查找", "Find"));
     m_replace->setPlaceholderText(T("替换为", "Replace with"));
@@ -1048,7 +1364,7 @@ void Window::RefreshFooter()
     else if (ready > 0)
         hint = T("Enter 执行 · 可撤销", "Enter runs · undoable");
     else
-        hint = T("在上方输入查找与替换", "Type a find and a replace above");
+        hint = T("添加规则或载入预设", "Add a rule or load a preset");
     m_hint->setText(hint);
     m_hint->setToolTip(hint);
     m_status->setStyleSheet(QStringLiteral("color:%1;").arg(m_theme->subtext.name()));
