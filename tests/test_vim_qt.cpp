@@ -199,11 +199,11 @@ TEST_CASE(InsertModeAndEscape)
     CHECK(f.filter->insertMode());
     f.type("X");
     CHECK_EQ(f.text(), QStringLiteral("Xabc"));
-    // Esc leaves insert; the caret steps back onto the last typed char.
+    // Esc leaves insert; vim puts the caret on the last typed char, so a
+    // following x deletes that X, not a stale offset.
     f.press(Qt::Key_Escape);
     CHECK(!f.filter->insertMode());
     f.type("x");
-    // Caret is on 'X' (insert left it after the X, Esc steps back), so x eats X.
     CHECK_EQ(f.text(), QStringLiteral("abc"));
 }
 

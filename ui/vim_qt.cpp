@@ -115,13 +115,29 @@ VimTextFilter::VimTextFilter(QPlainTextEdit* editor, QObject* parent)
     // The filter is installed permanently and gated by m_enabled: installing it
     // only when vim mode turns on would miss the first key press after the toggle.
     editor->installEventFilter(this);
+    connect(editor, &QPlainTextEdit::textChanged, this, [this] {
+        // Insert text is deliberately native so Qt owns IME composition, paste,
+        // and drag/drop. Bring the core up to date without recreating it (which
+        // would silently switch Insert back to Normal).
+        if (m_enabled && m_editor && !m_selfEdit
+            && m_editor->mode() == vimcore::Mode::Insert)
+            m_editor->refreshFromDocument();
+    });
 }
 
 void VimTextFilter::setEnabled(bool enabled)
 {
+    if (m_enabled == enabled)
+    {
+        if (m_enabled && m_editor)
+            emit statusChanged(statusText());
+        return;
+    }
     m_enabled = enabled;
     if (enabled)
         resync();
+    else
+        emit statusChanged(QString());
 }
 
 void VimTextFilter::resync()
@@ -129,6 +145,7 @@ void VimTextFilter::resync()
     // A fresh core over the current text and caret. Undo history is per-session
     // by design: switching modes or reloading the buffer starts a new one.
     m_editor = std::make_unique<vimcore::VimEditor>(*m_document);
+    m_lastStatus.clear();
     emit statusChanged(statusText());
 }
 
@@ -144,12 +161,13 @@ bool VimTextFilter::insertMode() const
 
 void VimTextFilter::feed(const vimcore::Key& key)
 {
+    m_selfEdit = true;
     m_editor->key(key);
+    m_selfEdit = false;
     const QString status = m_document->status();
-    static QString last;
-    if (status != last)
+    if (status != m_lastStatus)
     {
-        last = status;
+        m_lastStatus = status;
         emit statusChanged(status);
     }
 }

@@ -208,6 +208,15 @@ if(RENAME_BUILD_QT)
     endif()
     add_test(NAME vim_qt COMMAND vim_qt_tests)
 
+    add_executable(vim_window_tests tests/test_vim_window.cpp)
+    target_link_libraries(vim_window_tests PRIVATE rename_widgets Qt6::Core Qt6::Gui Qt6::Widgets)
+    set_target_properties(vim_window_tests PROPERTIES AUTOMOC ON)
+    if(MSVC)
+        target_compile_options(vim_window_tests PRIVATE /utf-8 /W4 /permissive-)
+        set_target_properties(vim_window_tests PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
+    endif()
+    add_test(NAME vim_window COMMAND vim_window_tests)
+
     # ---- standalone window wrapper (local verification only) ----------------
     # Not shipped: plugin.json names rename.exe, and only one program may be
     # runtime.program. This executable exists so the window can be opened and

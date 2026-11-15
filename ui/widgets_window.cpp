@@ -33,6 +33,7 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
+#include <QKeyEvent>
 #include <QShortcut>
 #include <QStyle>
 #include <QStackedWidget>
@@ -829,9 +830,9 @@ void Window::BuildUi()
     ctrlS->setContext(Qt::WidgetWithChildrenShortcut);
     connect(ctrlS, &QShortcut::activated, this, &Window::ConfirmAndApply);
 
-    auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    escape->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(escape, &QShortcut::activated, this, [this] { close(); });
+    // Esc is NOT a QShortcut: shortcut matching runs before key delivery, so it
+    // would steal Esc from the vim filter and close the window mid-edit. The
+    // keyPressEvent override below handles it and knows when the editor owns it.
 }
 
 void Window::ConnectBridge()
@@ -1058,6 +1059,25 @@ void Window::SyncRuleSelection()
         m_ruleList->setCurrentIndex(modelIndex);
     }
     m_syncing = false;
+}
+
+void Window::keyPressEvent(QKeyEvent* event)
+{
+    // Esc closes the window — unless the vim-enabled text editor owns it (leave
+    // insert, cancel a pending operator). The vim filter consumes those keys
+    // before they bubble here; this guard covers the remaining focus cases.
+    if (event->key() == Qt::Key_Escape)
+    {
+        const bool vimOwnsIt = m_vim && m_vim->enabled() && m_text && m_text->hasFocus();
+        if (!vimOwnsIt)
+        {
+            close();
+            return;
+        }
+        event->ignore();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void Window::RefreshVim()

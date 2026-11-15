@@ -60,6 +60,8 @@ public:
     bool enabled() const { return m_enabled; }
     // Turning the filter on/off also rewinds the core to the widget's current
     // text and caret, so a stale copy can never overwrite what the user sees.
+    // Calling setEnabled() with the current value is a no-op: RefreshAll() may
+    // run after every buffer update and must not reset Insert mode.
     void setEnabled(bool enabled);
     // Re-read the widget after something else changed the buffer (mode switch,
     // apply, external load).
@@ -82,6 +84,8 @@ private:
     QtDocument* m_document = nullptr;
     std::unique_ptr<vimcore::VimEditor> m_editor;
     bool m_enabled = false;
+    bool m_selfEdit = false;
+    QString m_lastStatus;
 };
 
 } // namespace rename_widgets
