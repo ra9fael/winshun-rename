@@ -2,10 +2,13 @@
 #include "ui/vim_qt.h"
 
 #include <QKeyEvent>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextEdit>
 
 #include <algorithm>
 
@@ -36,6 +39,25 @@ vimcore::Cursor cursorOf(QPlainTextEdit* edit)
 QString toQString(const std::wstring& text)
 {
     return QString::fromStdWString(text);
+}
+
+// The last position of a line, including its paragraph separator, clamped to the
+// document: what a linewise selection has to cover.
+int lineEndPosition(QPlainTextEdit* edit, std::size_t line)
+{
+    const QTextDocument* doc = edit->document();
+    const QTextBlock block = doc->findBlockByNumber(static_cast<int>(line));
+    if (!block.isValid())
+        return doc->characterCount() - 1;
+    const int end = block.position() + block.length(); // past the separator
+    return std::min(end, doc->characterCount() - 1);
+}
+
+int lineStartPosition(QPlainTextEdit* edit, std::size_t line)
+{
+    const QTextDocument* doc = edit->document();
+    const QTextBlock block = doc->findBlockByNumber(static_cast<int>(line));
+    return block.isValid() ? block.position() : 0;
 }
 
 } // namespace
@@ -74,6 +96,8 @@ void QtDocument::setCursor(vimcore::Cursor cursor)
     QTextCursor caret = m_edit->textCursor();
     caret.setPosition(positionOf(m_edit, cursor));
     m_edit->setTextCursor(caret);
+    if (onCursorLine)
+        onCursorLine(cursor.line);
 }
 
 void QtDocument::setSelection(const vimcore::Selection& selection)
@@ -81,21 +105,49 @@ void QtDocument::setSelection(const vimcore::Selection& selection)
     if (!selection.active)
         return; // Normal mode: the core's setCursor already placed the caret
 
-    QTextCursor caret = m_edit->textCursor();
-    const int anchor = positionOf(m_edit, selection.anchor);
+    int anchor = positionOf(m_edit, selection.anchor);
     int head = positionOf(m_edit, selection.head);
+
     if (selection.lineWise)
     {
-        // V: the whole line, including its newline, reads as selected.
-        const QTextBlock block = m_edit->document()->findBlockByNumber(
-            static_cast<int>(selection.head.line));
-        if (block.isValid())
-            head = block.position() + block.length() - 1;
+        // V: whole lines on both ends, not just the characters between the two
+        // columns. Expanding only the head is what made V look like v.
+        const int anchorLine = static_cast<int>(selection.anchor.line);
+        const int headLine = static_cast<int>(selection.head.line);
+        const int low = std::min(anchorLine, headLine);
+        const int high = std::max(anchorLine, headLine);
+        const int lowPos = lineStartPosition(m_edit, static_cast<std::size_t>(low));
+        const int highPos = lineEndPosition(m_edit, static_cast<std::size_t>(high));
+        // Keep the caret on the end the cursor is actually at.
+        QTextCursor caret = m_edit->textCursor();
+        if (headLine >= anchorLine)
+        {
+            caret.setPosition(lowPos);
+            caret.setPosition(highPos, QTextCursor::KeepAnchor);
+        }
+        else
+        {
+            caret.setPosition(highPos);
+            caret.setPosition(lowPos, QTextCursor::KeepAnchor);
+        }
+        m_edit->setTextCursor(caret);
+        return;
     }
-    else if (head >= anchor)
-        head += 1; // the char under the cursor is part of the visual range
-    caret.setPosition(anchor);
-    caret.setPosition(head, QTextCursor::KeepAnchor);
+
+    // Character-wise: vim includes the character under BOTH ends, so the end
+    // that is not the cursor's moves one further. A backward selection used to
+    // lose the anchor character.
+    QTextCursor caret = m_edit->textCursor();
+    if (head >= anchor)
+    {
+        caret.setPosition(anchor);
+        caret.setPosition(head + 1, QTextCursor::KeepAnchor); // the char under the head
+    }
+    else
+    {
+        caret.setPosition(anchor + 1);
+        caret.setPosition(head, QTextCursor::KeepAnchor); // the char under the anchor
+    }
     m_edit->setTextCursor(caret);
 }
 
@@ -111,18 +163,41 @@ VimTextFilter::VimTextFilter(QPlainTextEdit* editor, QObject* parent)
     , m_edit(editor)
 {
     m_document = new QtDocument(editor);
+    m_document->onCursorLine = [this](std::size_t line) {
+        const int value = static_cast<int>(line);
+        if (value != m_lastLine)
+        {
+            m_lastLine = value;
+            emit cursorLineChanged(value);
+        }
+    };
     m_editor = std::make_unique<vimcore::VimEditor>(*m_document);
     // The filter is installed permanently and gated by m_enabled: installing it
     // only when vim mode turns on would miss the first key press after the toggle.
     editor->installEventFilter(this);
+    m_savedCursorWidth = std::max(editor->cursorWidth(), 1);
+
     connect(editor, &QPlainTextEdit::textChanged, this, [this] {
-        // Insert text is deliberately native so Qt owns IME composition, paste,
-        // and drag/drop. Bring the core up to date without recreating it (which
-        // would silently switch Insert back to Normal).
-        if (m_enabled && m_editor && !m_selfEdit
-            && m_editor->mode() == vimcore::Mode::Insert)
+        // Text can change behind the core's back: native insert typing, IME
+        // commits, paste, and the host's own Ctrl+Z undo. Keep the core's copy
+        // current in every mode, or the next vim command works on stale text.
+        if (m_enabled && m_editor && !m_selfEdit)
             m_editor->refreshFromDocument();
+        updateBlockCaret();
     });
+    connect(editor, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+        updateBlockCaret();
+        if (m_document && m_edit)
+        {
+            const int line = m_edit->textCursor().blockNumber();
+            if (line != m_lastLine)
+            {
+                m_lastLine = line;
+                emit cursorLineChanged(line);
+            }
+        }
+    });
+    connect(editor, &QObject::destroyed, this, [this] { m_edit = nullptr; });
 }
 
 void VimTextFilter::setEnabled(bool enabled)
@@ -137,7 +212,11 @@ void VimTextFilter::setEnabled(bool enabled)
     if (enabled)
         resync();
     else
+    {
         emit statusChanged(QString());
+        emit modeChanged(false, false);
+    }
+    updateBlockCaret();
 }
 
 void VimTextFilter::resync()
@@ -146,7 +225,10 @@ void VimTextFilter::resync()
     // by design: switching modes or reloading the buffer starts a new one.
     m_editor = std::make_unique<vimcore::VimEditor>(*m_document);
     m_lastStatus.clear();
+    updateViewportRows();
     emit statusChanged(statusText());
+    applyModeUi();
+    updateBlockCaret();
 }
 
 QString VimTextFilter::statusText() const
@@ -159,6 +241,11 @@ bool VimTextFilter::insertMode() const
     return m_editor && m_editor->mode() == vimcore::Mode::Insert;
 }
 
+bool VimTextFilter::replaceMode() const
+{
+    return m_editor && m_editor->mode() == vimcore::Mode::Replace;
+}
+
 void VimTextFilter::feed(const vimcore::Key& key)
 {
     m_selfEdit = true;
@@ -169,13 +256,106 @@ void VimTextFilter::feed(const vimcore::Key& key)
     {
         m_lastStatus = status;
         emit statusChanged(status);
+        applyModeUi();
     }
+    updateBlockCaret();
+}
+
+void VimTextFilter::applyModeUi()
+{
+    if (!m_editor)
+        return;
+    const bool insert = insertMode();
+    const bool replace = replaceMode();
+    // Replace mode is core-driven, so nothing may reach the widget as text: that
+    // also means the input method must stay out of the way.
+    if (m_edit)
+        m_edit->setAttribute(Qt::WA_InputMethodEnabled, m_enabled && !replace);
+    emit modeChanged(insert, replace);
+}
+
+void VimTextFilter::updateViewportRows()
+{
+    if (!m_edit || !m_editor)
+        return;
+    const int lineSpacing = m_edit->fontMetrics().lineSpacing();
+    const int height = m_edit->viewport()->height();
+    // Before the first layout the viewport has no height; 20 rows is the same
+    // default the core uses, so paging behaves sensibly either way.
+    const int rows = (lineSpacing > 0 && height > 0)
+        ? std::max(1, height / lineSpacing)
+        : 20;
+    m_editor->setViewportRows(static_cast<std::size_t>(rows));
+}
+
+void VimTextFilter::updateBlockCaret()
+{
+    if (!m_edit)
+        return;
+    if (!m_enabled || !m_editor)
+    {
+        if (m_blockCaret || m_edit->cursorWidth() == 0)
+        {
+            m_blockCaret = false;
+            m_edit->setCursorWidth(m_savedCursorWidth);
+            m_edit->setExtraSelections({});
+        }
+        return;
+    }
+
+    if (insertMode())
+    {
+        // Insert keeps the platform caret: a thin bar reads correctly while
+        // typing and matches what IME composition expects.
+        if (m_blockCaret || m_edit->cursorWidth() == 0)
+        {
+            m_blockCaret = false;
+            m_edit->setCursorWidth(m_savedCursorWidth);
+            m_edit->setExtraSelections({});
+        }
+        return;
+    }
+
+    QTextEdit::ExtraSelection selection;
+    selection.cursor = m_edit->textCursor();
+    QTextCharFormat format;
+    // Invert the character cell: the block takes the text colour and the glyph
+    // takes the background, which is what a terminal vim cursor looks like.
+    const QPalette palette = m_edit->palette();
+    const QColor fill = palette.color(QPalette::Text);
+    const QColor glyph = palette.color(QPalette::Base);
+    format.setBackground(fill);
+    format.setForeground(glyph);
+    if (selection.cursor.atBlockEnd() || selection.cursor.atBlockStart())
+    {
+        // Nothing under the cursor (empty line, or past the last char): fill the
+        // rest of the line so the cursor is still visible.
+        format.setProperty(QTextFormat::FullWidthSelection, true);
+    }
+    else
+        selection.cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 1);
+    selection.format = format;
+    m_edit->setCursorWidth(0); // the native caret would show through the block
+    m_edit->setExtraSelections({selection});
+    m_blockCaret = true;
 }
 
 bool VimTextFilter::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched != m_edit || !m_enabled || !m_editor)
         return QObject::eventFilter(watched, event);
+
+    if (event->type() == QEvent::Resize)
+    {
+        updateViewportRows();
+        updateBlockCaret();
+        return QObject::eventFilter(watched, event);
+    }
+    if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)
+    {
+        updateBlockCaret();
+        return QObject::eventFilter(watched, event);
+    }
 
     // Only key presses are ours. Everything else — IME composition, input method
     // queries, clipboard, drag and drop — goes straight to the widget.
@@ -195,13 +375,41 @@ bool VimTextFilter::eventFilter(QObject* watched, QEvent* event)
     }
 
     // Window-owned chords stay with the window: Ctrl+S runs the batch, Ctrl+Z/Y
-    // are the host undo, Alt and F-keys belong to the shell.
+    // are the host undo, Alt and F-keys belong to the shell. The core owns a
+    // small, explicit list of Ctrl chords instead.
     const Qt::KeyboardModifiers modifiers = key->modifiers();
     const bool ctrl = modifiers.testFlag(Qt::ControlModifier);
     if (modifiers.testFlag(Qt::AltModifier) || modifiers.testFlag(Qt::MetaModifier))
         return QObject::eventFilter(watched, event);
-    if (ctrl && key->key() != Qt::Key_R)
-        return QObject::eventFilter(watched, event);
+    if (ctrl)
+    {
+        switch (key->key())
+        {
+        case Qt::Key_R: // redo
+            feed(vimcore::Key{vimcore::KeyName::Char, L'R', 1, true});
+            return true;
+        case Qt::Key_A: // increment number
+            feed(vimcore::Key{vimcore::KeyName::Char, L'a', 1, true});
+            return true;
+        case Qt::Key_X: // decrement number
+            feed(vimcore::Key{vimcore::KeyName::Char, L'x', 1, true});
+            return true;
+        case Qt::Key_D: // half page down
+            feed(vimcore::Key{vimcore::KeyName::Char, L'd', 1, true});
+            return true;
+        case Qt::Key_U: // half page up
+            feed(vimcore::Key{vimcore::KeyName::Char, L'u', 1, true});
+            return true;
+        case Qt::Key_F: // full page down
+            feed(vimcore::Key{vimcore::KeyName::Char, L'f', 1, true});
+            return true;
+        case Qt::Key_B: // full page up
+            feed(vimcore::Key{vimcore::KeyName::Char, L'b', 1, true});
+            return true;
+        default:
+            return QObject::eventFilter(watched, event);
+        }
+    }
     if (key->key() >= Qt::Key_F1 && key->key() <= Qt::Key_F35)
         return QObject::eventFilter(watched, event);
 
@@ -223,18 +431,13 @@ bool VimTextFilter::eventFilter(QObject* watched, QEvent* event)
     case Qt::Key_End:       translated = {vimcore::KeyName::End, L'\0', 1, false}; break;
     case Qt::Key_PageUp:    translated = {vimcore::KeyName::PageUp, L'\0', 1, false}; break;
     case Qt::Key_PageDown:  translated = {vimcore::KeyName::PageDown, L'\0', 1, false}; break;
-    case Qt::Key_R:
-        if (!ctrl)
-        {
-            have = false;
-            break;
-        }
-        translated = {vimcore::KeyName::Char, L'R', 1, true}; // Ctrl+R redo
-        break;
     default:
     {
+        // Printable characters (including 'r' and 'R'!) come through as text. A
+        // key that is not one of the named ones and carries no text is left to
+        // the widget.
         const QString text = key->text();
-        if (text.isEmpty() || key->text().at(0).isNull())
+        if (text.isEmpty() || text.at(0).isNull())
         {
             have = false;
             break;

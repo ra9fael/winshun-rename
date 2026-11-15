@@ -81,9 +81,13 @@ private:
     bool zh() const;
     void ApplyTitleBar();
     void RefreshVim();
+    // Point the preview table at the row the vim cursor is on (oil-style
+    // feedback: edit a line, see which item it belongs to).
+    void HighlightPreviewRow(int line);
 
     rename_qml::Bridge* m_bridge = nullptr;
     VimTextFilter* m_vim = nullptr;
+    int m_vimLine = 0;
 
     Theme* m_theme = nullptr;
 

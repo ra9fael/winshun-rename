@@ -305,6 +305,139 @@ TEST_CASE(ResyncTakesTheNewText)
     CHECK_EQ(f.text(), QStringLiteral("rand new text"));
 }
 
+// ---- Replace mode (R) --------------------------------------------------------
+
+TEST_CASE(CapitalRNoLongerLeaksIntoTheText)
+{
+    // 0.4.1 translated Qt::Key_R as "not ours" without Ctrl, so Shift+R fell
+    // through to the widget and typed an 'r'.
+    Fixture f(QStringLiteral("abc"));
+    f.press(Qt::Key_R, Qt::ShiftModifier, QStringLiteral("R"));
+    CHECK_EQ(f.filter->statusText(), QStringLiteral("-- REPLACE --"));
+    CHECK(f.filter->replaceMode());
+    CHECK(!f.spy.sawKeyPress); // the key never reached the widget as text
+    f.type("XY");
+    CHECK_EQ(f.text(), QStringLiteral("XYc"));
+    f.press(Qt::Key_Escape);
+    CHECK_EQ(f.filter->statusText(), QStringLiteral("-- NORMAL --"));
+    CHECK_EQ(f.text(), QStringLiteral("XYc"));
+}
+
+TEST_CASE(ReplaceModeIsOneUndo)
+{
+    Fixture f(QStringLiteral("abc"));
+    f.press(Qt::Key_R, Qt::ShiftModifier, QStringLiteral("R"));
+    f.type("XY");
+    f.press(Qt::Key_Escape);
+    f.type("u");
+    CHECK_EQ(f.text(), QStringLiteral("abc"));
+}
+
+// ---- Ctrl chords the core owns ----------------------------------------------
+
+TEST_CASE(CtrlAIncrementsTheNumberUnderTheCursor)
+{
+    Fixture f(QStringLiteral("file1.txt"));
+    f.press(Qt::Key_A, Qt::ControlModifier);
+    CHECK_EQ(f.text(), QStringLiteral("file2.txt"));
+    CHECK(!f.spy.sawKeyPress); // Ctrl+A is no longer "select all" here
+    f.press(Qt::Key_X, Qt::ControlModifier);
+    CHECK_EQ(f.text(), QStringLiteral("file1.txt"));
+}
+
+TEST_CASE(CtrlDHalfPagesAndIsConsumed)
+{
+    QStringList lines;
+    for (int i = 0; i < 40; ++i)
+        lines << QStringLiteral("line%1").arg(i);
+    Fixture f(lines.join(QLatin1Char('\n')));
+    f.press(Qt::Key_D, Qt::ControlModifier);
+    CHECK(!f.spy.sawKeyPress);
+    CHECK(f.caret().blockNumber() > 0); // moved down a half page (≥1 line)
+    f.press(Qt::Key_U, Qt::ControlModifier);
+    CHECK_EQ(f.caret().blockNumber(), 0);
+}
+
+TEST_CASE(CtrlSStillBelongsToTheWindow)
+{
+    Fixture f(QStringLiteral("abc"));
+    f.press(Qt::Key_S, Qt::ControlModifier);
+    CHECK(f.spy.sawKeyPress); // the window's "run the batch" chord passes through
+    CHECK_EQ(f.text(), QStringLiteral("abc"));
+}
+
+TEST_CASE(HostCtrlZKeepsTheCoreInSync)
+{
+    // Ctrl+Z is the host's undo (it reaches the widget). The core has to notice,
+    // or the next vim command edits stale text.
+    Fixture f(QStringLiteral("abc"));
+    f.type("x"); // core edit: "bc"
+    CHECK_EQ(f.text(), QStringLiteral("bc"));
+    f.edit.undo(); // the widget's own undo -> "abc"
+    CHECK_EQ(f.text(), QStringLiteral("abc"));
+    f.type("$"); // last char of the text the user now sees
+    f.type("x");
+    CHECK_EQ(f.text(), QStringLiteral("ab"));
+}
+
+// ---- selection rendering -----------------------------------------------------
+
+TEST_CASE(VisualLineSelectionCoversWholeLines)
+{
+    Fixture f(QStringLiteral("abc\ndef\nghi"));
+    f.type("V"); // visual line on line 0
+    f.type("j"); // ... and line 1
+    const QTextCursor caret = f.caret();
+    CHECK(caret.hasSelection());
+    CHECK_EQ(caret.selectionStart(), 0);
+    // Both lines, newline included: "abc\ndef\n".
+    CHECK_EQ(caret.selectedText().size(), 8);
+}
+
+TEST_CASE(VisualSelectionIncludesBothEnds)
+{
+    Fixture f(QStringLiteral("abcdef"));
+    f.type("vlly"); // select "abc"
+    CHECK_EQ(f.filter->statusText(), QStringLiteral("-- NORMAL --"));
+    f.type("p"); // paste it after the cursor? cursor is at 0 -> after 'a'
+    CHECK_EQ(f.text(), QStringLiteral("aabcbcdef"));
+}
+
+TEST_CASE(BackwardVisualSelectionKeepsTheAnchorChar)
+{
+    Fixture f(QStringLiteral("abcdef"));
+    f.type("$");  // last char
+    f.type("v");
+    f.type("h");
+    f.type("h");
+    // Visual from 'f' back to 'd' must cover d,e,f.
+    const QTextCursor caret = f.caret();
+    CHECK(caret.hasSelection());
+    CHECK_EQ(caret.selectedText(), QStringLiteral("def"));
+}
+
+// ---- caret shape -------------------------------------------------------------
+
+TEST_CASE(BlockCaretInNormalAndLineCaretInInsert)
+{
+    Fixture f(QStringLiteral("abc"));
+    CHECK(f.filter->blockCaretVisible());
+    CHECK_EQ(f.edit.cursorWidth(), 0); // the native caret is hidden
+    f.type("i");
+    CHECK(!f.filter->blockCaretVisible());
+    CHECK(f.edit.cursorWidth() > 0); // typing gets the ordinary caret back
+    f.press(Qt::Key_Escape);
+    CHECK(f.filter->blockCaretVisible());
+}
+
+TEST_CASE(BlockCaretDisappearsWhenVimIsOff)
+{
+    Fixture f(QStringLiteral("abc"));
+    f.filter->setEnabled(false);
+    CHECK(!f.filter->blockCaretVisible());
+    CHECK(f.edit.cursorWidth() > 0);
+}
+
 int main(int argc, char** argv)
 {
     // Offscreen: the test must not need a desktop session.

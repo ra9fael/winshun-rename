@@ -20,6 +20,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QInputDialog>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -972,6 +973,7 @@ void Window::ConnectBridge()
     // The filter is installed once and gated by its own enabled flag; the toggle
     // only flips that flag and remembers it.
     m_vim = new VimTextFilter(m_text, this);
+    connect(m_vim, &VimTextFilter::cursorLineChanged, this, &Window::HighlightPreviewRow);
     connect(m_vim, &VimTextFilter::statusChanged, this, [this](const QString& status) {
         if (m_vimBadge)
             m_vimBadge->setText(m_vim->enabled() ? status : QString());
@@ -1279,6 +1281,45 @@ void Window::RefreshAll()
     SyncPath();
     SyncTextEditor();
     RefreshVim();
+    // Rows are rebuilt on every buffer change; keep the highlighted row in step.
+    HighlightPreviewRow(m_vimLine);
+}
+
+void Window::HighlightPreviewRow(int line)
+{
+    // The text buffer is "/<id> name" per line; the preview table is keyed by the
+    // same id, so one lookup connects the line the vim cursor is on to its row.
+    m_vimLine = line;
+    if (!m_bridge || !m_table || !m_vim || !m_vim->enabled())
+        return;
+    if (m_bridge->mode() != QStringLiteral("text"))
+        return;
+
+    const QStringList lines = m_bridge->buffer().split(QLatin1Char('\n'));
+    if (line < 0 || line >= lines.size())
+        return;
+    const QString text = lines.at(line);
+    if (!text.startsWith(QLatin1Char('/')))
+        return;
+    int i = 1;
+    while (i < text.size() && text.at(i).isDigit())
+        ++i;
+    if (i == 1)
+        return;
+    const QString id = text.mid(1, i - 1);
+
+    QAbstractItemModel* model = m_bridge->previewModel();
+    for (int row = 0; row < model->rowCount(); ++row)
+    {
+        const QModelIndex index = model->index(row, 0);
+        if (model->data(index, rename_qml::PreviewModel::IdRole).toString() == id)
+        {
+            m_table->selectionModel()->setCurrentIndex(
+                index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            m_table->scrollTo(index, QAbstractItemView::EnsureVisible);
+            return;
+        }
+    }
 }
 
 void Window::Retranslate()

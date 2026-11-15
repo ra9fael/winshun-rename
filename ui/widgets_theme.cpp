@@ -1,5 +1,6 @@
 #include "ui/widgets_theme.h"
 
+#include <QFontDatabase>
 #include <QPalette>
 #include <QStringList>
 #include <QWidget>
@@ -139,9 +140,28 @@ Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize,
     t.font.setPixelSize(t.fontBody);
     t.font.setStyleStrategy(QFont::PreferAntialias);
 
-    t.mono = QFont(zh ? QStringLiteral("Microsoft YaHei UI")
-                      : QStringLiteral("Cascadia Mono"));
-    t.mono.setStyleHint(zh ? QFont::SansSerif : QFont::Monospace);
+    // Text mode is a vim/editor surface: pick a monospace family that is really
+    // installed (Cascadia Mono ships with Windows Terminal, not with Windows),
+    // and keep the CJK UI font as a fallback so Chinese file names still render.
+    const QStringList families = QFontDatabase::families();
+    QString monoFamily;
+    for (const QString& candidate : {QStringLiteral("Cascadia Mono"),
+                                     QStringLiteral("Cascadia Code"),
+                                     QStringLiteral("Consolas"),
+                                     QStringLiteral("Courier New")})
+    {
+        if (families.contains(candidate, Qt::CaseInsensitive))
+        {
+            monoFamily = candidate;
+            break;
+        }
+    }
+    if (monoFamily.isEmpty())
+        monoFamily = QStringLiteral("Consolas");
+    t.mono = QFont(monoFamily);
+    t.mono.setStyleHint(QFont::Monospace);
+    if (zh)
+        t.mono.setFamilies({monoFamily, t.font.family()}); // mono Latin, CJK fallback
     t.mono.setPixelSize(t.fontBody);
     return t;
 }

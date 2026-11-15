@@ -22,6 +22,7 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QTextCursor>
 #include <QThread>
@@ -164,6 +165,41 @@ struct Harness
     QString text1() const { return text ? text->toPlainText() : QString(); }
     bool insertMode() const { return vim && vim->insertMode(); }
     QString status() const { return vim ? vim->statusText() : QString(); }
+
+    // The preview table (right pane) as the user sees it.
+    QTableView* table() const { return window ? window->findChild<QTableView*>() : nullptr; }
+    QString previewTarget(int row)
+    {
+        auto* model = bridge.previewModel();
+        return model->data(model->index(row, 0), rename_qml::PreviewModel::TargetRole).toString();
+    }
+    QString previewOriginal(int row)
+    {
+        auto* model = bridge.previewModel();
+        return model->data(model->index(row, 0), rename_qml::PreviewModel::OriginalRole).toString();
+    }
+    int previewRows() { return bridge.previewModel()->rowCount(); }
+    int previewCurrentRow() const
+    {
+        QTableView* view = table();
+        return view ? view->currentIndex().row() : -1;
+    }
+    // Move the vim cursor to the start of a buffer line ("/1 name"), then past
+    // the "/<id> " anchor so commands land on the name.
+    void gotoNameStart(int line)
+    {
+        if (!text)
+            return;
+        QTextCursor caret = text->textCursor();
+        caret.movePosition(QTextCursor::Start);
+        for (int i = 0; i < line; ++i)
+            caret.movePosition(QTextCursor::Down);
+        text->setTextCursor(caret);
+        pump(20);
+        vim->resync();
+        type("0");
+        type("lll"); // past "/<id>"
+    }
 
     QTemporaryDir m_temp;
     rename_qml::Bridge bridge;
@@ -317,6 +353,104 @@ TEST_CASE(UndoRestoresTheWholeInsertSession)
 
     h.type("u");
     CHECK_EQ(h.text1(), QStringLiteral("ab")); // one undo for the whole session
+}
+
+// ---- preview: the right table follows the text buffer ------------------------
+
+TEST_CASE(PreviewListsTheFilesBeforeAnyVimKey)
+{
+    Harness h;
+    h.bridge.setVimEnabled(true);
+    Harness::pump(80);
+    CHECK_EQ(h.previewRows(), 2);
+    CHECK_EQ(h.previewOriginal(0), QStringLiteral("alpha.txt"));
+    CHECK_EQ(h.previewTarget(0), QStringLiteral("alpha.txt"));
+}
+
+TEST_CASE(PreviewTargetUpdatesAfterANormalModeEdit)
+{
+    // The user's question: "how do I preview a change in vim mode?" — edit the
+    // line, and the target column follows 120 ms later.
+    Harness h;
+    h.bridge.setVimEnabled(true);
+    Harness::pump(80);
+    CHECK_EQ(h.text1(), QStringLiteral("/1 alpha.txt\n/2 beta.txt\n"));
+
+    h.press(Qt::Key_0);
+    h.type("lll");          // onto the name "alpha.txt"
+    h.type("c$");           // replace the whole name, keeping the "/1 " anchor
+    h.type("gamma.txt");
+    h.press(Qt::Key_Escape);
+    Harness::pump(300);     // the buffer sync is a 120 ms single shot
+
+    CHECK_EQ(h.text1(), QStringLiteral("/1 gamma.txt\n/2 beta.txt\n"));
+    CHECK_EQ(h.previewTarget(0), QStringLiteral("gamma.txt"));
+    CHECK_EQ(h.previewTarget(1), QStringLiteral("beta.txt"));
+}
+
+TEST_CASE(PreviewRowFollowsTheVimCursorLine)
+{
+    Harness h;
+    h.bridge.setVimEnabled(true);
+    Harness::pump(80);
+    CHECK_EQ(h.previewCurrentRow(), 0); // first line highlighted to start with
+
+    h.type("j");
+    Harness::pump(60);
+    CHECK_EQ(h.previewCurrentRow(), 1); // "/2 beta.txt" -> the second row
+
+    h.type("k");
+    Harness::pump(60);
+    CHECK_EQ(h.previewCurrentRow(), 0);
+}
+
+TEST_CASE(CtrlAOnANameUpdatesThePreview)
+{
+    Harness h;
+    h.bridge.setVimEnabled(true);
+    Harness::pump(80);
+
+    // Give the first name a number, then bump it with vim's Ctrl-A.
+    h.gotoNameStart(0);
+    h.type("c$");
+    h.type("img01.png");
+    h.press(Qt::Key_Escape);
+    Harness::pump(300);
+    CHECK_EQ(h.previewTarget(0), QStringLiteral("img01.png"));
+
+    h.type("0lll");
+    h.type("f1");                      // onto the digit
+    h.press(Qt::Key_A, Qt::ControlModifier);
+    Harness::pump(300);
+    CHECK_EQ(h.text1(), QStringLiteral("/1 img02.png\n/2 beta.txt\n"));
+    CHECK_EQ(h.previewTarget(0), QStringLiteral("img02.png"));
+}
+
+TEST_CASE(ReplaceModeOverwritesInsideTheWindow)
+{
+    Harness h;
+    h.bridge.setVimEnabled(true);
+    Harness::pump(80);
+
+    h.gotoNameStart(0);
+    h.press(Qt::Key_R, Qt::ShiftModifier, QStringLiteral("R"));
+    CHECK_EQ(h.status(), QStringLiteral("-- REPLACE --"));
+    h.type("ZZZ"); // overwrites "alp"
+    h.press(Qt::Key_Escape);
+    CHECK_EQ(h.status(), QStringLiteral("-- NORMAL --"));
+    CHECK_EQ(h.text1(), QStringLiteral("/1 ZZZha.txt\n/2 beta.txt\n"));
+    Harness::pump(300);
+    CHECK_EQ(h.previewTarget(0), QStringLiteral("ZZZha.txt"));
+}
+
+TEST_CASE(VimOffLeavesTheTextBufferAlone)
+{
+    Harness h;
+    CHECK(!h.vim->enabled());
+    const QString before = h.text1();
+    h.type("x"); // plain typing goes to the widget, vim does not consume it
+    CHECK(h.text1() == before || h.text1().contains(QLatin1Char('x')));
+    CHECK(!h.vim->blockCaretVisible());
 }
 
 int main(int argc, char** argv)

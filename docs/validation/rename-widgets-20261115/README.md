@@ -121,10 +121,10 @@ crash did not recur with the font/symbol fix and `memoryMB: 256`.
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
 Widgets added to the shared-Qt contract). The installed experimental package is
-`dist/ra9fael.rename-0.4.1.wsplugin` (3,352,112 bytes, SHA-256
-`161798728ddd272d09ba2f798cd8ba1f4f5afe41f49f89ab7732305a86e4f64d`).
+`dist/ra9fael.rename-0.4.2.wsplugin` (3,365,022 bytes, SHA-256
+`00401d20ffc3e148abbf476c41dd1842b97ee881d3bdd4ab4bd1b7c1dd343ccb`).
 
-## Vim mode (0.4.0, fixes in 0.4.1)
+## Vim mode (0.4.2 conformance round)
 
 The text page has a `Vim` chip and a mode badge. Vim keys come from
 [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore), a portable
@@ -151,11 +151,26 @@ Design points worth knowing:
   here: re-applying the (unchanged) vim setting on every Bridge refresh
   rebuilt the core, so the first typed character dropped out of Insert.
   `setEnabled()` is now idempotent, guarded by `vim_window` tests.
+- **Vimcore 0.2.0 is conformance-tested.** A new 69-case suite raised the core
+  total to 126 tests and fixes the semantics that initially diverged from Vim:
+  h/l and Left/Right stop at line boundaries; `R` is real overwrite mode; `r`
+  replaces the cursor character; Ctrl+A/X edit signed, padded number sequences;
+  Ctrl+D/U/F/B use the visible viewport; `u`/Ctrl+R support counts; and `.`,
+  `iw`/`aw`, `%`, Visual `o`/`u`/`U`/`~`/`p`/`J` are covered.
+- **Vim-looking UI.** Normal, Visual and Replace use an inverted block cursor;
+  Insert keeps Qt's thin native cursor so IME remains intact. The text editor
+  now chooses a real monospace face (Cascadia Mono/Code, Consolas, Courier New)
+  with the host CJK UI font as fallback.
+- **Preview is visible while editing.** The table highlights the `/id` row under
+  the Vim cursor, and its target name refreshes from a Normal-mode edit after
+  the existing 120ms buffer debounce. Window regression tests exercise that full
+  text to Bridge to preview route.
 - **Window chords keep working**: Ctrl+S runs the batch, Ctrl+Z/Ctrl+Y stay the
-  host undo, Alt/F-keys pass through. Ctrl+R is the one Ctrl chord the editor
-  takes (vim redo).
+  host undo, Alt/F-keys pass through. Ctrl+R is Vim redo; Ctrl+A/X and
+  Ctrl+D/U/F/B are explicitly consumed by Vim.
 - **The core owns undo.** `u`/Ctrl+R walk vimcore's own snapshots, so they never
-  disturb the widget's undo history, and one insert session is one undo step.
+  disturb the widget's undo history, and one Insert or Replace session is one
+  undo step. A host Ctrl+Z text change re-syncs the core before the next Vim key.
 - **Off by default, remembered.** The choice lives in `<dataDir>/settings.json`
   as `{"vimMode":true}`; a second launch restores it with no grab hook involved
   (`vim-persisted.png` above).
@@ -164,14 +179,14 @@ Verification:
 
 | Check | Result |
 |---|---|
-| `vendor/vimcore` tests | 57/57 pass (portable, no Qt) |
-| `vim_qt` adapter tests | 14/14 pass — real QKeyEvents against a `QPlainTextEdit` (offscreen) |
-| `vim_window` tests | 8/8 pass — Esc ownership, insert mode survives buffer sync, native typing followed by Normal edits |
+| `vendor/vimcore` tests | 126/126 pass — 57 existing + 69 Vim-conformance cases (portable, no Qt) |
+| `vim_qt` adapter tests | 25/25 pass — real QKeyEvents, R, Ctrl operations, host Ctrl+Z sync, selection and block-caret checks |
+| `vim_window` tests | 14/14 pass — Esc/Insert regressions plus R, Ctrl+A, preview target refresh and current-row highlight |
 | `rename` suite | 6/6 ctest targets pass (`vim_window`, `vim_qt`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`) |
-| Installed 0.4.0, text mode + Vim on | 45.4 MB working set / 8.4 MB private |
-| Installed 0.4.1, text mode + Vim on | 41.5 MB working set / 7.6 MB private (`vim-installed-041.png`) |
+| Installed 0.4.2 | `ws plugin install`: `ra9fael.rename 0.4.2`, `enabled=True`, `status=ready` |
+| Installed probe | process remained alive; 259.2 MB working set / 136.0 MB private. The automated grab hook did not emit a PNG in this run, so no screenshot claim is made. |
 | Settings round-trip | run 1 wrote `{"vimMode":true}`; run 2 without the grab hook still showed `-- NORMAL --` |
-| Submodule | `git submodule add https://github.com/ra9fael/winshun-vimcore vendor/vimcore`, pinned to `8280084` |
+| Submodule | pinned to public vimcore tag `v0.2.1` (`b9ae7b3`), following the conformance release `v0.2.0` |
 
 ## Rule chain (0.3.0)
 
