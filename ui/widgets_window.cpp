@@ -4,6 +4,7 @@
 #include "ui/widgets_theme.h"
 
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -284,7 +285,14 @@ Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowFlag(Qt::WindowContextHelpButtonHint, false);
 
-    m_theme = new Theme(Theme::From(m_bridge->look(), m_bridge->dark(), m_bridge->uiSize()));
+    m_theme = new Theme(Theme::From(m_bridge->look(), m_bridge->dark(), m_bridge->uiSize(),
+                                    m_bridge->locale()));
+    // Set the CJK-capable face before any child is created. Setting it only
+    // after BuildUi is too late: laying out a Chinese label with the default
+    // Latin font has already populated Qt's fallback font cache (measured:
+    // 129 MB private versus 9 MB when the font is chosen up front).
+    QApplication::setFont(m_theme->font);
+    m_theme->apply(this);
 
     BuildUi();
     ConnectBridge();
@@ -311,11 +319,11 @@ void Window::BuildUi()
     topLayout->setContentsMargins(12, 0, 8, 0);
     topLayout->setSpacing(8);
 
-    auto* titleIcon = new QLabel(QStringLiteral("✎"), top);
-    titleIcon->setObjectName(QStringLiteral("caption"));
+    // No Unicode pencil/arrow glyphs here: U+270E and U+23F7 make Qt fall back
+    // to Segoe UI Emoji/Symbol, which costs ~120 MB of private memory on this
+    // machine (measured). The title is text only; the arrows are painted.
     auto* title = new QLabel(T("重命名", "Rename"), top);
     title->setObjectName(QStringLiteral("topTitle"));
-    topLayout->addWidget(titleIcon);
     topLayout->addWidget(title);
     topLayout->addStretch(1);
 
@@ -445,11 +453,8 @@ void Window::BuildUi()
 
     m_text = new QPlainTextEdit(textPage);
     m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
-    QFont mono(QStringLiteral("Cascadia Mono"));
-    mono.setStyleHint(QFont::Monospace);
-    mono.setPixelSize(m_theme->fontBody);
-    m_text->setFont(mono);
-    m_text->setTabStopDistance(4 * QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' ')));
+    m_text->setFont(m_theme->mono);
+    m_text->setTabStopDistance(4 * QFontMetricsF(m_theme->mono).horizontalAdvance(QLatin1Char(' ')));
     textLayout->addWidget(m_text, 1);
     m_leftStack->addWidget(textPage);
 
@@ -554,6 +559,7 @@ void Window::BuildUi()
     m_hint = new QLabel(footer);
     m_hint->setObjectName(QStringLiteral("caption"));
     m_hint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_hint->setMinimumWidth(190);
     m_hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     footerLayout->addWidget(m_hint, 1);
     rightLayout->addWidget(footer);
@@ -863,19 +869,23 @@ void Window::ApplyAppearance()
     if (!m_bridge || !m_theme)
         return;
 
-    *m_theme = Theme::From(m_bridge->look(), m_bridge->dark(), m_bridge->uiSize());
+    *m_theme = Theme::From(m_bridge->look(), m_bridge->dark(), m_bridge->uiSize(),
+                           m_bridge->locale());
+    QApplication::setFont(m_theme->font);
     m_theme->apply(this);
 
     setWindowTitle(T("重命名", "Rename"));
     m_table->verticalHeader()->setDefaultSectionSize(m_theme->rowHeight);
     m_table->setColumnWidth(0, 34);
+    m_bridge->previewModel()->setBaseFont(m_theme->font);
+    if (m_scope)
+        m_scope->view()->setFont(m_theme->font);
+    if (m_filter)
+        m_filter->view()->setFont(m_theme->font);
     if (m_text)
     {
-        QFont mono(QStringLiteral("Cascadia Mono"));
-        mono.setStyleHint(QFont::Monospace);
-        mono.setPixelSize(m_theme->fontBody);
-        m_text->setFont(mono);
-        m_text->setTabStopDistance(4 * QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' ')));
+        m_text->setFont(m_theme->mono);
+        m_text->setTabStopDistance(4 * QFontMetricsF(m_theme->mono).horizontalAdvance(QLatin1Char(' ')));
     }
     ApplyTitleBar();
     RefreshFooter();

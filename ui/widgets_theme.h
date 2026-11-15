@@ -57,8 +57,10 @@ struct Theme
     int fontSmall = 12;
 
     QFont font;
+    QFont mono;
 
-    static Theme From(const QVariantMap& look, bool dark, const QString& uiSize);
+    static Theme From(const QVariantMap& look, bool dark, const QString& uiSize,
+                      const QString& locale);
 
     // The widget's palette and stylesheet. Cheap enough to redo when the host
     // sends a new appearance.

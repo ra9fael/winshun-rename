@@ -69,7 +69,8 @@ QString Rgba(const QColor& colour)
 
 } // namespace
 
-Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize)
+Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize,
+                  const QString& locale)
 {
     Theme t;
     t.dark = dark;
@@ -126,10 +127,21 @@ Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize)
     t.controlHeight = controlHeight[level];
     t.rowHeight = rowHeight[level];
 
-    t.font = QFont(QStringLiteral("Segoe UI Variable Text"));
+    // A direct CJK family matters: Qt's fallback from a Latin-only family to a
+    // CJK face loads a very large font cache (measured: 122 MB private for four
+    // Chinese labels versus 9 MB with Microsoft YaHei UI selected explicitly).
+    // Choosing the family here keeps the Widgets window in single-digit MBs.
+    const bool zh = locale.startsWith(QLatin1String("zh"));
+    t.font = QFont(zh ? QStringLiteral("Microsoft YaHei UI")
+                      : QStringLiteral("Segoe UI Variable Text"));
     t.font.setStyleHint(QFont::SansSerif);
     t.font.setPixelSize(t.fontBody);
     t.font.setStyleStrategy(QFont::PreferAntialias);
+
+    t.mono = QFont(zh ? QStringLiteral("Microsoft YaHei UI")
+                      : QStringLiteral("Cascadia Mono"));
+    t.mono.setStyleHint(zh ? QFont::SansSerif : QFont::Monospace);
+    t.mono.setPixelSize(t.fontBody);
     return t;
 }
 

@@ -150,7 +150,9 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
     case Qt::FontRole:
         if (index.column() == 2 && row.status == rename_core::Status::Ready)
         {
-            QFont font = QApplication::font();
+            QFont font = m_baseFont;
+            if (font.family().isEmpty())
+                font = QApplication::font();
             font.setBold(true);
             return font;
         }

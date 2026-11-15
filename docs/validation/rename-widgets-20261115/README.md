@@ -22,8 +22,15 @@ were present when the experiment started.
   instead of an empty set. `reset()` clears the same state.
 - Apply results are matched back by the full planned target path, not by a leaf
   suffix, so equal leaf names in different folders cannot be mixed up.
-- `package/plugin.json` raises `memoryMB` from 128 to 512. The Qt Quick window
-  crashed with `qBadAlloc` under the 128 MB job cap; see the earlier QML log.
+- `package/plugin.json` raises `memoryMB` from 128 to 256 as headroom. The
+  measured window is now ~10 MB private, so the old 128 MB cap was not the real
+  cause; the Unicode-symbol/font fallback below was.
+- The window no longer uses `✎`/`⏷`-style Unicode glyphs: U+270E alone loaded
+  Segoe UI Emoji/Symbol and cost ~119 MB private on this machine. Arrows and
+  checkmarks are painted now.
+- The CJK-capable font (`Microsoft YaHei UI`) is selected before any child
+  widget is created; selecting it later was too late because layout had already
+  populated Qt's fallback font cache.
 - `tools/pack.ps1` bundles `Qt6Widgets.dll` when the exe imports it. Qt Widgets
   is not in WinShun's shared-Qt contract yet.
 
@@ -69,26 +76,44 @@ A host-like process (same environment as `tools/host-sim.ps1`) started
 ```
 
 It answered `{"effects":[{"type":"hide"}]}`, the plugin logged
-`[rename] files trigger: count=2`, and the window rendered at 822×616. The
-128 MB crash did not recur with `memoryMB: 512`.
+`[rename] files trigger: count=1`, and the window rendered at 822×616. The
+128 MB crash did not recur with the font/symbol fix and `memoryMB: 256`.
 
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
 Widgets added to the shared-Qt contract). The final experimental package is
-`dist/ra9fael.rename-0.1.0.wsplugin` (3,294,591 bytes, SHA-256
-`e2602764b4088df713bbc7755a8025ebdf78a44665cf223566266234bdb418ad`).
+`dist/ra9fael.rename-0.1.0.wsplugin` (3,295,311 bytes, SHA-256
+`015a69fe12be048cef94f3a6187470514e5cafbca23c2791311765ac228e38ce`).
 
 ## Memory (this machine)
 
 | Build | Working set | Private / commit | Notes |
 |---|---:|---:|---|
-| QML window, 128 MB cap | 324 MB peak (wrapper) | 164 MB commit at crash | `qBadAlloc` in `QFontEngine::initializeHeightMetrics` |
-| Widgets window, idle after 1.5 s | 261 MB | 136 MB | two rows, dark fluent tokens |
-| Widgets under host Qt, two-file files trigger | 260 MB | 136 MB | sampled while the window was open |
+| QML window, 128 MB cap | 324 MB peak (wrapper) | 164 MB commit at crash | `qBadAlloc`; also contained `✎`/`⏷` glyphs |
+| Widgets, before glyph/font fix | 261 MB | 136 MB | same two rows |
+| Widgets, final, two files | 50 MB | 12.5 MB | peak paged 27 MB |
+| Widgets, final, Chinese filenames | 50 MB | 12.1 MB | peak paged 27 MB |
+| Widgets under host Qt, files trigger | 45 MB | 8.6 MB | sampled with the window open |
 
-Widgets remove the QML engine and scene graph, but the Qt GUI/font stack is
-still the dominant cost. This is not a "tiny" build; Win32 GDI/DirectWrite is
-the way to get there. The immediate job-cap problem is solved by 512 MB.
+### Why the first Widgets number was wrong
+
+A minimal Qt Widgets probe isolated the cost; these are private/commit numbers
+on this machine:
+
+| Probe | Private |
+|---|---:|
+| English labels, default font | 10 MB |
+| Chinese labels, default font | 122 MB |
+| Chinese labels, `Microsoft YaHei UI` selected up front | 9 MB |
+| The same plus a `✎` label (U+270E) | 119 MB |
+| The same plus `⏷` (U+23F7) | 54 MB |
+
+So the high number was **not Qt Widgets**. Qt's fallback from a Latin-only font
+to a CJK face, and from normal text to Segoe UI Emoji/Symbol for `✎`/`⏷`, loads
+large font caches. The QML window used the same glyphs and the same Latin-only
+family, so its 164 MB crash was likely the same effect plus the QML engine; that
+QML combination was not retested. Win32 GDI is only the answer if the target is
+"single-digit MB"; Widgets is already around 10 MB private after the fix.
 
 ## Not verified yet
 

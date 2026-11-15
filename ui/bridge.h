@@ -16,6 +16,7 @@
 #include "win/platform.h"
 
 #include <QColor>
+#include <QFont>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -53,6 +54,7 @@ public:
     void setRows(const std::vector<rename_ui::Row>& rows);
     std::vector<rename_ui::Row> rows() const { return m_rows; }
     void setLocale(const QString& locale) { m_locale = locale; }
+    void setBaseFont(const QFont& font) { m_baseFont = font; }
     void setColors(const QColor& text, const QColor& subtext, const QColor& faint, const QColor& danger);
 
 signals:
@@ -65,6 +67,7 @@ private:
 
     std::vector<rename_ui::Row> m_rows;
     QString m_locale = QStringLiteral("zh");
+    QFont m_baseFont;
     QColor m_text;
     QColor m_subtext;
     QColor m_faint;
