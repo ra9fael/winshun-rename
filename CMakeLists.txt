@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 project(rename LANGUAGES CXX)
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -80,6 +84,9 @@ else()
 endif()
 
 add_executable(rename main.cpp)
+if(WIN32)
+    target_sources(rename PRIVATE resources/rename.rc)
+endif()
 target_link_libraries(rename PRIVATE rename_core rename_win rename_ui)
 target_include_directories(rename PRIVATE "${CMAKE_SOURCE_DIR}")
 # The view-model is plain C++ with no Qt, which is what makes the UI behaviour
@@ -159,6 +166,13 @@ if(RENAME_BUILD_QT)
         target_link_libraries(rename_widgets PUBLIC dwmapi)
     endif()
     set_target_properties(rename_widgets PROPERTIES AUTOMOC ON)
+    qt_add_resources(rename_widgets "rename_icons"
+        PREFIX "/"
+        BASE "${CMAKE_SOURCE_DIR}"
+        FILES
+            resources/rename.ico
+            resources/rename.png
+    )
     if(MSVC)
         target_compile_options(rename_widgets PRIVATE /utf-8 /W4 /permissive-)
         set_target_properties(rename_widgets PROPERTIES MSVC_RUNTIME_LIBRARY "${RENAME_CRT}")
@@ -179,6 +193,9 @@ if(RENAME_BUILD_QT)
     # It links the same rename_widgets and rename_win, so the code path under test
     # is the plugin's own.
     add_executable(rename_ui_exe ui/main-ui.cpp)
+    if(WIN32)
+        target_sources(rename_ui_exe PRIVATE resources/rename.rc)
+    endif()
     target_link_libraries(rename_ui_exe PRIVATE rename_widgets rename_win)
     set_target_properties(rename_ui_exe PROPERTIES AUTOMOC ON OUTPUT_NAME "rename-ui")
     if(MSVC)

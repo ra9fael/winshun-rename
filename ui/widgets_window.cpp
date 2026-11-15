@@ -10,16 +10,20 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QStyledItemDelegate>
@@ -279,9 +283,10 @@ Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
     : QWidget(parent)
     , m_bridge(bridge)
 {
-    setWindowTitle(T("重命名", "Rename"));
+    setWindowTitle(T("批量重命名", "Batch Rename"));
     setMinimumSize(700, 520);
     resize(822, 616);
+    setWindowIcon(QIcon(QStringLiteral(":/resources/rename.ico")));
     setAttribute(Qt::WA_DeleteOnClose, false);
     setWindowFlag(Qt::WindowContextHelpButtonHint, false);
 
@@ -322,9 +327,9 @@ void Window::BuildUi()
     // No Unicode pencil/arrow glyphs here: U+270E and U+23F7 make Qt fall back
     // to Segoe UI Emoji/Symbol, which costs ~120 MB of private memory on this
     // machine (measured). The title is text only; the arrows are painted.
-    auto* title = new QLabel(T("重命名", "Rename"), top);
-    title->setObjectName(QStringLiteral("topTitle"));
-    topLayout->addWidget(title);
+    m_title = new QLabel(T("批量重命名", "Batch Rename"), top);
+    m_title->setObjectName(QStringLiteral("topTitle"));
+    topLayout->addWidget(m_title);
     topLayout->addStretch(1);
 
     const auto makeModeButton = [this, top](const QString& text, const QString& target) {
@@ -345,6 +350,43 @@ void Window::BuildUi()
     topLayout->addWidget(m_modeText);
 
     root->addWidget(top);
+    root->addWidget(Divider(Qt::Horizontal, this));
+
+    // ---- directory bar ----------------------------------------------------
+    auto* pathBar = new QWidget(this);
+    pathBar->setFixedHeight(36);
+    auto* pathLayout = new QHBoxLayout(pathBar);
+    pathLayout->setContentsMargins(12, 0, 8, 0);
+    pathLayout->setSpacing(6);
+
+    m_up = new QToolButton(pathBar);
+    m_up->setText(T("上一级", "Up"));
+    m_up->setObjectName(QStringLiteral("chipButton"));
+    m_up->setToolTip(T("上一级", "Parent folder"));
+    m_up->setCursor(Qt::PointingHandCursor);
+    pathLayout->addWidget(m_up);
+
+    m_path = new QLineEdit(pathBar);
+    m_path->setPlaceholderText(T("文件夹", "Folder"));
+    m_path->setClearButtonEnabled(false);
+    m_path->setToolTip(T("回车进入这个文件夹", "Press Enter to open this folder"));
+    pathLayout->addWidget(m_path, 1);
+
+    m_browse = new QToolButton(pathBar);
+    m_browse->setText(T("选择…", "Choose…"));
+    m_browse->setObjectName(QStringLiteral("chipButton"));
+    m_browse->setToolTip(T("选择目录", "Choose a folder"));
+    m_browse->setCursor(Qt::PointingHandCursor);
+    pathLayout->addWidget(m_browse);
+
+    m_reload = new QToolButton(pathBar);
+    m_reload->setText(T("刷新", "Refresh"));
+    m_reload->setObjectName(QStringLiteral("chipButton"));
+    m_reload->setToolTip(T("重新读取这个文件夹", "Reload this folder"));
+    m_reload->setCursor(Qt::PointingHandCursor);
+    pathLayout->addWidget(m_reload);
+
+    root->addWidget(pathBar);
     root->addWidget(Divider(Qt::Horizontal, this));
 
     // ---- body -------------------------------------------------------------
@@ -394,10 +436,10 @@ void Window::BuildUi()
     m_replace->setPlaceholderText(T("替换为", "Replace with"));
     control->addWidget(m_replace);
 
-    auto* scopeLabel = new QLabel(T("应用于", "Apply to"), controlPage);
-    scopeLabel->setObjectName(QStringLiteral("caption"));
+    m_scopeLabel = new QLabel(T("应用于", "Apply to"), controlPage);
+    m_scopeLabel->setObjectName(QStringLiteral("caption"));
     control->addSpacing(14);
-    control->addWidget(scopeLabel);
+    control->addWidget(m_scopeLabel);
     control->addSpacing(5);
 
     m_scope = new ComboBox(m_theme, controlPage);
@@ -406,10 +448,10 @@ void Window::BuildUi()
     m_scope->addItem(T("完整名称", "Full name"));
     control->addWidget(m_scope);
 
-    auto* formatLabel = new QLabel(T("文本格式", "Text formatting"), controlPage);
-    formatLabel->setObjectName(QStringLiteral("caption"));
+    m_formatLabel = new QLabel(T("文本格式", "Text formatting"), controlPage);
+    m_formatLabel->setObjectName(QStringLiteral("caption"));
     control->addSpacing(14);
-    control->addWidget(formatLabel);
+    control->addWidget(m_formatLabel);
     control->addSpacing(5);
 
     auto* caseRow = new QHBoxLayout;
@@ -572,6 +614,22 @@ void Window::BuildUi()
         if (!m_syncing)
             m_bridge->selectAll(checked);
     });
+    connect(m_path, &QLineEdit::returnPressed, this, [this] { NavigateTo(m_path->text()); });
+    connect(m_up, &QToolButton::clicked, this, &Window::GoUp);
+    connect(m_browse, &QToolButton::clicked, this, &Window::BrowseFolder);
+    connect(m_reload, &QToolButton::clicked, this, &Window::ReloadFolder);
+    connect(m_table, &QTableView::doubleClicked, this, [this](const QModelIndex& index) {
+        if (index.isValid() && m_bridge->rowIsFolder(index.row()))
+            NavigateTo(m_bridge->pathForRow(index.row()));
+    });
+
+    auto* refresh = new QShortcut(QKeySequence(Qt::Key_F5), this);
+    refresh->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(refresh, &QShortcut::activated, this, &Window::ReloadFolder);
+
+    auto* upShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Up")), this);
+    upShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(upShortcut, &QShortcut::activated, this, &Window::GoUp);
 
     auto* enter = new QShortcut(QKeySequence(Qt::Key_Return), this);
     enter->setContext(Qt::WidgetWithChildrenShortcut);
@@ -706,6 +764,95 @@ void Window::SyncTextEditor()
     m_syncing = false;
 }
 
+void Window::SyncPath()
+{
+    if (!m_path || !m_bridge)
+        return;
+    const QString folder = m_bridge->currentFolder();
+    if (!m_path->hasFocus() && m_path->text() != folder)
+    {
+        m_path->setText(folder);
+        m_path->setCursorPosition(0); // show the drive/root, not the tail
+    }
+    const bool hasFolder = !folder.isEmpty();
+    const QString parent = hasFolder ? QFileInfo(folder).absolutePath() : QString();
+    m_up->setEnabled(hasFolder && !parent.isEmpty()
+                     && parent.compare(folder, Qt::CaseInsensitive) != 0);
+    m_reload->setEnabled(hasFolder);
+    m_path->setToolTip(hasFolder ? folder : T("还没有打开文件夹", "No folder is open"));
+}
+
+bool Window::ConfirmDiscard()
+{
+    // Only the text buffer is an edit that navigation would lose. Control-mode
+    // rules are intentionally kept across folders.
+    if (m_bridge->mode() != QStringLiteral("text"))
+        return true;
+    if (m_text->toPlainText() == m_bridge->buffer())
+        return true;
+    return Ask(T("文本里有未执行的修改。切换文件夹会丢弃它们，继续吗？",
+                 "The text buffer has unexecuted changes. Switching folders will discard them. Continue?"),
+               T("继续", "Continue"));
+}
+
+void Window::NavigateTo(const QString& folder)
+{
+    if (!m_bridge)
+        return;
+    const QFileInfo info(folder);
+    if (folder.isEmpty() || !info.isDir())
+    {
+        SyncPath();
+        QMessageBox::warning(this, T("批量重命名", "Batch Rename"),
+                             T("找不到这个文件夹：", "This folder does not exist: ") + folder);
+        return;
+    }
+    if (!ConfirmDiscard())
+    {
+        SyncPath();
+        return;
+    }
+    m_bridge->openFolder(info.absoluteFilePath());
+    RefreshAll();
+}
+
+void Window::GoUp()
+{
+    if (!m_bridge)
+        return;
+    const QString folder = m_bridge->currentFolder();
+    if (folder.isEmpty())
+        return;
+    const QString parent = QFileInfo(folder).absolutePath();
+    if (parent.isEmpty() || parent.compare(folder, Qt::CaseInsensitive) == 0)
+        return;
+    NavigateTo(parent);
+}
+
+void Window::ReloadFolder()
+{
+    if (!m_bridge)
+        return;
+    if (m_bridge->currentFolder().isEmpty())
+        return;
+    if (!ConfirmDiscard())
+        return;
+    m_bridge->reloadFolder();
+    RefreshAll();
+}
+
+void Window::BrowseFolder()
+{
+    if (!m_bridge)
+        return;
+    const QString start = m_bridge->currentFolder();
+    const QString folder = QFileDialog::getExistingDirectory(
+        this, T("选择文件夹", "Choose a folder"), start,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (!folder.isEmpty())
+        NavigateTo(folder);
+}
+
 void Window::PushRule()
 {
     if (!m_bridge || m_syncing)
@@ -748,7 +895,46 @@ void Window::RefreshAll()
     RefreshCounts();
     RefreshEmptyState();
     RefreshFooter();
+    SyncPath();
     SyncTextEditor();
+}
+
+void Window::Retranslate()
+{
+    setWindowTitle(T("批量重命名", "Batch Rename"));
+    if (m_title)
+        m_title->setText(T("批量重命名", "Batch Rename"));
+    m_modeRules->setText(T("规则", "Rules"));
+    m_modeText->setText(T("文本", "Text"));
+
+    m_path->setPlaceholderText(T("文件夹", "Folder"));
+    m_up->setText(T("上一级", "Up"));
+    m_up->setToolTip(T("上一级", "Parent folder"));
+    m_browse->setText(T("选择…", "Choose…"));
+    m_browse->setToolTip(T("选择目录", "Choose a folder"));
+    m_reload->setText(T("刷新", "Refresh"));
+    m_reload->setToolTip(T("重新读取这个文件夹", "Reload this folder"));
+
+    m_find->setPlaceholderText(T("查找", "Find"));
+    m_replace->setPlaceholderText(T("替换为", "Replace with"));
+    m_regex->setText(T("使用正则表达式", "Use regular expressions"));
+    m_matchAll->setText(T("替换全部匹配", "Match all occurrences"));
+    m_caseSensitive->setText(T("区分大小写", "Case sensitive"));
+    m_scopeLabel->setText(T("应用于", "Apply to"));
+    m_formatLabel->setText(T("文本格式", "Text formatting"));
+    m_scope->setItemText(0, T("文件名", "Name"));
+    m_scope->setItemText(1, T("仅扩展名", "Extension only"));
+    m_scope->setItemText(2, T("完整名称", "Full name"));
+    m_filter->setItemText(0, T("全部", "All"));
+    m_filter->setItemText(1, T("已选", "Selected"));
+    m_filter->setItemText(2, T("可改", "Applicable"));
+    m_filter->setItemText(3, T("要改", "To rename"));
+    m_selectAll->setToolTip(T("全选", "Select all"));
+
+    static const char* caseTipsZh[4] = {"全部小写", "全部大写", "首字母大写", "每词首字母大写"};
+    static const char* caseTipsEn[4] = {"lowercase", "UPPERCASE", "Capitalize", "Title Case"};
+    for (int i = 0; i < 4; ++i)
+        m_caseButtons[i]->setToolTip(T(caseTipsZh[i], caseTipsEn[i]));
 }
 
 void Window::RefreshMode()
@@ -822,13 +1008,14 @@ void Window::RefreshFooter()
     const int errors = m_bridge->errorCount();
     const int ready = m_bridge->readyCount();
     const int unchanged = m_bridge->unchangedCount();
+    const int skipped = m_bridge->skippedCount();
 
     const QString blocking = m_bridge->blockingReason();
     const bool blocked = !m_bridge->blockedLine().isEmpty();
     QColor dot = m_theme->faint;
     if (!done.isEmpty())
         dot = m_theme->ok;
-    else if (blocked || errors > 0)
+    else if (blocked || errors > 0 || skipped > 0)
         dot = m_theme->caution;
     else if (ready > 0)
         dot = m_theme->ok;
@@ -847,6 +1034,8 @@ void Window::RefreshFooter()
             line += T(" · %1 项冲突或有问题", " · %1 blocked").arg(errors);
         else if (ready > 0)
             line += T(" · 无冲突", " · no conflicts");
+        if (skipped > 0)
+            line += T(" · %1 项未出现在文本中", " · %1 not in text").arg(skipped);
         m_status->setText(line);
     }
 
@@ -874,9 +1063,13 @@ void Window::ApplyAppearance()
     QApplication::setFont(m_theme->font);
     m_theme->apply(this);
 
-    setWindowTitle(T("重命名", "Rename"));
+    setWindowTitle(T("批量重命名", "Batch Rename"));
     m_table->verticalHeader()->setDefaultSectionSize(m_theme->rowHeight);
     m_table->setColumnWidth(0, 34);
+    QPalette tablePalette = m_table->palette();
+    tablePalette.setColor(QPalette::Highlight, m_theme->selection);
+    tablePalette.setColor(QPalette::HighlightedText, m_theme->text);
+    m_table->setPalette(tablePalette);
     m_bridge->previewModel()->setBaseFont(m_theme->font);
     if (m_scope)
         m_scope->view()->setFont(m_theme->font);
@@ -887,6 +1080,8 @@ void Window::ApplyAppearance()
         m_text->setFont(m_theme->mono);
         m_text->setTabStopDistance(4 * QFontMetricsF(m_theme->mono).horizontalAdvance(QLatin1Char(' ')));
     }
+    Retranslate();
+    RefreshCounts();
     ApplyTitleBar();
     RefreshFooter();
     RefreshEmptyState();
@@ -918,10 +1113,13 @@ void Window::ConfirmAndApply()
     const int ready = m_bridge->readyCount();
     const int unchanged = m_bridge->unchangedCount();
     const int errors = m_bridge->errorCount();
+    const int skipped = m_bridge->skippedCount();
 
     QString text = T("将重命名 %1 项。", "Rename %1 item(s).").arg(ready);
     if (unchanged > 0)
         text += T("\n%1 项不变。", "\n%1 unchanged.").arg(unchanged);
+    if (skipped > 0)
+        text += T("\n%1 项未出现在文本中，保持不变。", "\n%1 item(s) are not in the text and stay unchanged.").arg(skipped);
     if (errors > 0)
         text += T("\n%1 项冲突或有问题，不会执行。", "\n%1 item(s) blocked and will not run.").arg(errors);
     text += T("\n\n确定执行吗？", "\n\nRun it now?");

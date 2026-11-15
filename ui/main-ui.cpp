@@ -19,6 +19,7 @@
 #include "win/platform.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QTimer>
 
 #include <cstdio>
@@ -89,7 +90,8 @@ int main(int argc, char** argv)
         R"("controlHover":"#ff3c3c3c","controlBorder":"#ff444444",)"
         R"("inputFocused":"#ff1f1f1f","accent":"#ff4cc2ff","accentFill":"#ff0067c0",)"
         R"("accentText":"#ffffffff","danger":"#ffff99a4","dangerFill":"#ffc42b1c"})";
-    rename_host::ApplyLook("zh", true, "standard", look);
+    const QByteArray locale = qgetenv("RENAME_UI_LOCALE");
+    rename_host::ApplyLook(locale.isEmpty() ? "zh" : locale.constData(), true, "standard", look);
 
     if (wantFolder && !folder.empty())
         rename_host::ShowFolder(folder, recursive);

@@ -40,6 +40,7 @@ public:
         IsFolderRole,
         DepthRole,
         NoteRole,
+        SkippedRole,
     };
 
     explicit PreviewModel(QObject* parent = nullptr);
@@ -85,6 +86,7 @@ class Bridge : public QObject
     Q_PROPERTY(QString blockingReason READ blockingReason NOTIFY changed)
     Q_PROPERTY(int readyCount READ readyCount NOTIFY countsChanged)
     Q_PROPERTY(int unchangedCount READ unchangedCount NOTIFY countsChanged)
+    Q_PROPERTY(int skippedCount READ skippedCount NOTIFY countsChanged)
     Q_PROPERTY(int errorCount READ errorCount NOTIFY countsChanged)
     Q_PROPERTY(bool canExecute READ canExecute NOTIFY changed)
     Q_PROPERTY(int visibleCount READ visibleCount NOTIFY changed)
@@ -124,6 +126,7 @@ public:
     QString blockingReason() const;
     int readyCount() const;
     int unchangedCount() const;
+    int skippedCount() const;
     int errorCount() const;
     bool canExecute() const;
     int visibleCount() const;
@@ -133,6 +136,10 @@ public:
     QString doneLine() const { return m_doneLine; }
     QString blockedLine() const { return m_blockedLine; }
     QString filter() const;
+    QString currentFolder() const { return m_folder; }
+    QString pathForRow(int visibleRow) const;
+    bool rowIsFolder(int visibleRow) const;
+    bool hasUncommittedEdits() const;
     PreviewModel* previewModel();
     QVariantMap look() const { return m_look; }
     QString locale() const { return m_locale; }
@@ -180,6 +187,9 @@ public:
         // setSelection so the two meanings — "these items" and "what is in here" —
         // cannot be confused at a call site.
         Q_INVOKABLE void setFolder(const QString& folder, bool recursive);
+    Q_INVOKABLE void openFolder(const QString& folder);
+    Q_INVOKABLE void goUp();
+    Q_INVOKABLE void reloadFolder();
     // False when the current mode has unexecuted edits; the Widgets window then
     // asks the user and calls forceSwitchMode(). (The old QML path returned void
     // and silently ignored the click.)

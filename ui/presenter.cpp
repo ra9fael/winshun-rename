@@ -176,6 +176,7 @@ void Presenter::RefreshRows()
         row.selected = item.selected;
         row.isFolder = item.isFolder;
         row.depth = item.depth;
+        row.skipped = item.skipped;
         m_rows.push_back(std::move(row));
     }
 }
@@ -242,6 +243,8 @@ Counts Presenter::CurrentCounts() const
     {
         if (IsError(row.status))
             ++counts.errors;
+        else if (row.skipped)
+            ++counts.skipped;
         else if (row.status == rename_core::Status::Ready)
             ++counts.ready;
         else

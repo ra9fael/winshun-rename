@@ -35,8 +35,16 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
     std::vector<std::wstring> foldedNames;
     foldedNames.reserve(parsed.lines.size());
 
+    std::vector<long long> seenIds;
     for (const OilLine& line : parsed.lines)
     {
+        if (std::find(seenIds.begin(), seenIds.end(), line.id) != seenIds.end())
+        {
+            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::DuplicateId, line.line});
+            continue;
+        }
+        seenIds.push_back(line.id);
+
         const auto it = std::find_if(idTable.begin(), idTable.end(),
                                      [&](const OilEntry& entry) { return entry.id == line.id; });
         if (it == idTable.end())
@@ -69,13 +77,13 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
         diffs.push_back({OilDiffKind::Rename, line.id, line.leaf, OilErrorKind::NoAnchor, line.line});
     }
 
-    // Any id that vanished from the buffer would be a delete. Refuse it rather
-    // than quietly doing nothing: an accidental line removal is exactly the case
-    // where silence would be dangerous.
+    // A missing line is a safe skip, not a delete: a rename tool must never
+    // remove a file because a text line vanished. The UI says how many rows are
+    // skipped instead.
     for (std::size_t i = 0; i < idTable.size(); ++i)
     {
         if (!seen[i])
-            diffs.push_back({OilDiffKind::Rejected, idTable[i].id, {}, OilErrorKind::DeleteUnsupported, 0});
+            diffs.push_back({OilDiffKind::Skipped, idTable[i].id, {}, OilErrorKind::DeleteUnsupported, 0});
     }
 
     return diffs;
@@ -113,6 +121,11 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
         if (diff == diffs.end())
         {
             item.status = Status::Unchanged;
+        }
+        else if (diff->kind == OilDiffKind::Skipped)
+        {
+            item.status = Status::Unchanged;
+            item.skipped = true;
         }
         else if (diff->kind == OilDiffKind::Rejected)
         {
@@ -157,9 +170,14 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
             }
         }
 
-        // A parse error anywhere makes this row untrustworthy too.
-        if (!errorLines.empty() && item.status == Status::Unchanged)
+        // A parse error anywhere makes every otherwise-unchanged row
+        // untrustworthy, including a skipped one: a typo must not let the batch
+        // through with a partial view of the buffer.
+        if (!errorLines.empty() && (item.status == Status::Unchanged || item.skipped))
+        {
             item.status = Status::ErrorBadRule;
+            item.skipped = false;
+        }
 
         plan.items.push_back(std::move(item));
     }

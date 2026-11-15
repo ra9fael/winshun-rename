@@ -717,20 +717,35 @@ TEST_CASE(OilDifferRejectsUnknownId)
     CHECK(sawUnknown);
 }
 
-TEST_CASE(OilDifferRejectsVanishedId)
+TEST_CASE(OilDifferSkipsVanishedId)
 {
-    // Deleting a line must be refused, not silently ignored (RN-FR-19).
+    // A vanished line is a safe skip, not a delete: the file stays on disk.
     const std::wstring buffer = L"/1042 report-draft.txt\n/1044 photos/\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
 
-    bool sawDelete = false;
+    bool sawSkip = false;
     for (const OilDiff& diff : diffs)
     {
-        if (diff.kind == OilDiffKind::Rejected && diff.reason == OilErrorKind::DeleteUnsupported)
-            sawDelete = true;
+        if (diff.kind == OilDiffKind::Skipped && diff.id == 1043)
+            sawSkip = true;
     }
-    CHECK(sawDelete);
+    CHECK(sawSkip);
+}
+
+TEST_CASE(OilDifferRejectsDuplicateId)
+{
+    const std::wstring buffer = L"/1042 a.txt\n/1042 b.txt\n/1043 notes.txt\n/1044 photos/\n";
+    const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
+    const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
+
+    bool sawDuplicate = false;
+    for (const OilDiff& diff : diffs)
+    {
+        if (diff.kind == OilDiffKind::Rejected && diff.reason == OilErrorKind::DuplicateId)
+            sawDuplicate = true;
+    }
+    CHECK(sawDuplicate);
 }
 
 TEST_CASE(OilDifferRejectsDuplicateNamesCaseInsensitively)

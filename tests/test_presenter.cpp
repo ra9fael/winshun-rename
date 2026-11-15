@@ -215,16 +215,19 @@ TEST_CASE(PresenterTextModeBuildsFromBuffer)
     CHECK(presenter.CanExecute());
 }
 
-TEST_CASE(PresenterTextModeRefusesMixedEdit)
+TEST_CASE(PresenterTextModeSkipsVanishedEntry)
 {
-    // RN-T2-07: a buffer that both renames and deletes is refused wholesale.
+    // A vanished line is a safe skip: the second file stays untouched and the
+    // first can still be renamed.
     Presenter presenter;
     presenter.SetMode(Mode::Text);
     presenter.SetOilTable(oilTable());
-    presenter.SetBuffer(L"/1 uno.txt\n");   // entry 2 vanished -> delete
+    presenter.SetBuffer(L"/1 uno.txt\n");   // entry 2 vanished -> skip
 
-    CHECK(!presenter.CanExecute());
-    CHECK(presenter.Plan().HasBlockingError());
+    CHECK(presenter.CanExecute());
+    CHECK(!presenter.Plan().HasBlockingError());
+    CHECK_EQ(presenter.CurrentCounts().ready, 1);
+    CHECK_EQ(presenter.CurrentCounts().skipped, 1);
 }
 
 TEST_CASE(PresenterTextModeRefusesUnauthoredCreate)

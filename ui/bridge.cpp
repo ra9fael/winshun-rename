@@ -123,6 +123,7 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
     case IsFolderRole: return row.isFolder;
     case DepthRole:    return static_cast<int>(row.depth);
     case NoteRole:     return ToQt(row.note);
+    case SkippedRole:  return row.skipped;
 
     case Qt::CheckStateRole:
         return index.column() == 0 ? (row.selected ? Qt::Checked : Qt::Unchecked) : QVariant();
@@ -131,6 +132,9 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
             return QString();
         if (index.column() == 1)
             return ToQt(row.originalLeaf);
+        if (row.skipped)
+            return m_locale.startsWith(QLatin1String("zh"))
+                ? QStringLiteral("未在文本中，保持不变") : QStringLiteral("not in text; unchanged");
         return targetText(row);
     case Qt::DecorationRole:
         if (index.column() == 1 && QApplication::style())
@@ -142,6 +146,8 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
         {
             if (error)
                 return m_danger;
+            if (row.skipped)
+                return m_subtext;
             return row.status == rename_core::Status::Unchanged ? m_faint : m_text;
         }
         if (index.column() == 1)
@@ -209,6 +215,7 @@ QHash<int, QByteArray> PreviewModel::roleNames() const
         {IsFolderRole, "isFolder"},
         {DepthRole, "depth"},
         {NoteRole, "note"},
+        {SkippedRole, "skipped"},
     };
 }
 
@@ -319,6 +326,7 @@ QString Bridge::blockingReason() const
 
 int Bridge::readyCount() const { return m_presenter.CurrentCounts().ready; }
 int Bridge::unchangedCount() const { return m_presenter.CurrentCounts().unchanged; }
+int Bridge::skippedCount() const { return m_presenter.CurrentCounts().skipped; }
 int Bridge::errorCount() const { return m_presenter.CurrentCounts().errors; }
 bool Bridge::canExecute() const { return m_presenter.CanExecute(); }
 int Bridge::visibleCount() const { return static_cast<int>(m_presenter.VisibleRows().size()); }
@@ -368,6 +376,54 @@ QString Bridge::filter() const
 
 PreviewModel* Bridge::previewModel() { return &m_previewModel; }
 
+QString Bridge::pathForRow(int visibleRow) const
+{
+    const std::vector<rename_ui::Row> rows = m_presenter.VisibleRows();
+    if (visibleRow < 0 || static_cast<std::size_t>(visibleRow) >= rows.size())
+        return {};
+    const std::string& id = rows[static_cast<std::size_t>(visibleRow)].id;
+    for (const rename_win::CollectedItem& item : m_collected)
+    {
+        if (item.id == id)
+            return ToQt(item.fullPath);
+    }
+    return {};
+}
+
+bool Bridge::rowIsFolder(int visibleRow) const
+{
+    const std::vector<rename_ui::Row> rows = m_presenter.VisibleRows();
+    return visibleRow >= 0 && static_cast<std::size_t>(visibleRow) < rows.size()
+        && rows[static_cast<std::size_t>(visibleRow)].isFolder;
+}
+
+bool Bridge::hasUncommittedEdits() const
+{
+    return m_presenter.HasUncommittedEdits();
+}
+
+void Bridge::openFolder(const QString& folder)
+{
+    if (!folder.isEmpty() && QFileInfo(folder).isDir())
+        setFolder(folder, false);
+}
+
+void Bridge::goUp()
+{
+    if (m_folder.isEmpty())
+        return;
+    const QFileInfo current(m_folder);
+    const QString parent = current.absolutePath();
+    if (!parent.isEmpty() && parent.compare(m_folder, Qt::CaseInsensitive) != 0)
+        setFolder(parent, false);
+}
+
+void Bridge::reloadFolder()
+{
+    if (!m_folder.isEmpty())
+        setFolder(m_folder, false);
+}
+
 void Bridge::setSelection(const QStringList& paths, bool recursive)
 {
     // A new host selection is a new task: clear the previous report, filter and
@@ -381,6 +437,12 @@ void Bridge::setSelection(const QStringList& paths, bool recursive)
     m_blockedLine.clear();
     m_folder.clear();
     m_collected.clear();
+
+    // A multi-selection (and the wrapper's explicit file list) still has a
+    // directory for the navigation bar. The host uses the directory itself for
+    // a single file; this is the fallback.
+    if (!paths.isEmpty())
+        m_folder = QFileInfo(paths.first()).absolutePath();
 
     // The wrapper opens an empty window to show the empty state. An empty
     // selection is not an enumeration error.
@@ -444,6 +506,7 @@ void Bridge::setFolder(const QString& folder, bool recursive)
     m_doneLine.clear();
     m_blockedLine.clear();
     m_collected.clear();
+    m_folder = folder;
 
     rename_win::EnumerateRequest request;
     request.recursive = recursive;

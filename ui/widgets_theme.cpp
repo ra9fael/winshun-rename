@@ -90,6 +90,7 @@ Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize,
     t.subtext = LookColor(look, "subtext", dark ? QColor(QStringLiteral("#B8B8B8")) : QColor(QStringLiteral("#666666")));
     t.faint = LookColor(look, "faint", QColor(QStringLiteral("#8A8A8A")));
     t.hover = LookColor(look, "hover", dark ? QColor(QStringLiteral("#292929")) : QColor(QStringLiteral("#F1F1F1")));
+    t.selection = LookColor(look, "selection", dark ? QColor(QStringLiteral("#2F2F2F")) : QColor(QStringLiteral("#EAEAEA")));
     t.pressed = LookColor(look, "pressed", dark ? QColor(QStringLiteral("#323232")) : QColor(QStringLiteral("#E8E8E8")));
     t.control = LookColor(look, "control", dark ? QColor(QStringLiteral("#373737")) : QColor(QStringLiteral("#FFFFFF")));
     t.controlHover = LookColor(look, "controlHover", dark ? QColor(QStringLiteral("#3C3C3C")) : QColor(QStringLiteral("#F6F6F6")));
@@ -292,11 +293,19 @@ QTableView {
     color: @text;
     border: none;
     outline: 0;
-    selection-background-color: @hover;
+    selection-background-color: @selection;
     selection-color: @text;
 }
 QTableView::item {
     padding: 0 4px;
+}
+QTableView::item:selected {
+    background: @selection;
+    color: @text;
+}
+QTableView::item:hover {
+    background: @hover;
+    color: @text;
 }
 QHeaderView::section {
     background: @background;
@@ -342,6 +351,7 @@ QToolTip {
     qss.replace(QStringLiteral("@smallControlRadius"), QString::number(smallControlRadius));
 
     replace("@background", background);
+    replace("@selection", selection);
     replace("@controlBorder", controlBorder);
     replace("@controlHover", controlHover);
     replace("@control", control);

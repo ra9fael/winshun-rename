@@ -33,6 +33,26 @@ were present when the experiment started.
   populated Qt's fallback font cache.
 - `tools/pack.ps1` bundles `Qt6Widgets.dll` when the exe imports it. Qt Widgets
   is not in WinShun's shared-Qt contract yet.
+- The plugin is now **Batch Rename** only: `rename <pattern> -> <new>` and the
+  single-file preview path were removed; WinShun's F2 remains the way to rename
+  one file. The manifest name/title/keyword and menu title are localized.
+- One selected path drives the batch: a folder lists its direct children, a file
+  lists its siblings. A same-parent multi-selection opens exactly the selected
+  items.
+- A directory bar has `上一级` / `选择…` / `刷新`, an editable path and
+  double-click-to-enter on folder rows.
+- A missing line in the text buffer is a safe **skip** (`skipped`), not a
+  delete; unknown/duplicate ids and malformed lines still block.
+- The window has a `.ico` (RC + Qt resource) and follows the host locale on
+  `appearanceChanged` through `Retranslate()`.
+- The plugin no longer declares `winshun:search`; it does not query the index
+  for the old single-file path.
+
+The current WinShun host builds a file menu from `triggers.files` alone and has
+no per-path predicate. Therefore a multi-selection in different folders still
+shows the menu item; `action()` refuses it with "select one folder" instead of
+guessing. Exact "only same folder shows" needs a host field, which this branch
+does **not** change.
 
 ## Build and tests
 
@@ -57,13 +77,17 @@ same Widgets target used by the plugin.
 |---|---|
 | ![text](text.png) | ![filter](filter.png) |
 
-| Folder contents | Missing path (blocked, not "no files") |
+| Folder contents + navigation | Missing path (blocked, not "no files") |
 |---|---|
 | ![folder](folder.png) | ![missing](missing.png) |
 
-| Files trigger under the host Qt environment |
-|---|
-| ![trigger](host-files-trigger.png) |
+| Selected row (readable text) | Skipped line (missing from text buffer) |
+|---|---|
+| ![selected](selected.png) | ![skip](skip.png) |
+
+| English UI | Files trigger under the host Qt environment |
+|---|---|
+| ![english](english.png) | ![trigger](host-files-trigger.png) |
 
 ## Files trigger
 
@@ -75,15 +99,17 @@ A host-like process (same environment as `tools/host-sim.ps1`) started
  "trigger":"files","files":["…\\alpha.txt","…\\beta.txt"],"item":{},"text":""}}
 ```
 
-It answered `{"effects":[{"type":"hide"}]}`, the plugin logged
-`[rename] files trigger: count=1`, and the window rendered at 822×616. The
-128 MB crash did not recur with the font/symbol fix and `memoryMB: 256`.
+With one file it opens the file's parent directory, so the screenshot shows
+both `alpha.txt` and `beta.txt`; the selected file is the reason for the
+directory, not the only target. It answered `{"effects":[{"type":"hide"}]}`,
+logged `[rename] files trigger: count=1`, and rendered at 822×616. The 128 MB
+crash did not recur with the font/symbol fix and `memoryMB: 256`.
 
 This is not the same as clicking the item in WinShun's GUI: the real host still
 needs a package install with `Qt6Widgets.dll` beside the plugin exe (or Qt
-Widgets added to the shared-Qt contract). The final experimental package is
-`dist/ra9fael.rename-0.1.0.wsplugin` (3,295,311 bytes, SHA-256
-`015a69fe12be048cef94f3a6187470514e5cafbca23c2791311765ac228e38ce`).
+Widgets added to the shared-Qt contract). The installed experimental package is
+`dist/ra9fael.rename-0.2.0.wsplugin` (3,315,197 bytes, SHA-256
+`fddbe9c0dd2756125f7b4f5dc6a70f722eff80fa2e4a9fc46f83cfe6f0e684ef`).
 
 ## Memory (this machine)
 
@@ -93,7 +119,7 @@ Widgets added to the shared-Qt contract). The final experimental package is
 | Widgets, before glyph/font fix | 261 MB | 136 MB | same two rows |
 | Widgets, final, two files | 50 MB | 12.5 MB | peak paged 27 MB |
 | Widgets, final, Chinese filenames | 50 MB | 12.1 MB | peak paged 27 MB |
-| Widgets under host Qt, files trigger | 45 MB | 8.6 MB | sampled with the window open |
+| Widgets under host Qt, files trigger | 42 MB | 7.3 MB | installed 0.2.0, single file → parent folder |
 
 ### Why the first Widgets number was wrong
 
@@ -117,13 +143,17 @@ QML combination was not retested. Win32 GDI is only the answer if the target is
 
 ## Not verified yet
 
-- A real WinShun right-click install/click with this package (the host-like
-  process above is the closest so far).
+- A real WinShun right-click click with this package (it is installed and
+  enabled; the host-like process above is still not a menu click).
+- Exact same-folder menu filtering: the current WinShun host has no per-path
+  predicate, so the item appears for any multi-selection and `action()` rejects
+  a cross-folder one. No WinShun source was changed.
 - Light theme, 150/200 % DPI, screen reader, IME composition in the text editor.
-- Clicking the table checkbox, the select-all box and the filter with a mouse;
-  the filter screenshot used the `RENAME_GRAB_FILTER` diagnostic hook.
-- The confirmation dialog's visual appearance under the host's four themes.
-- The `.wsplugin` install/update path with the bundled `Qt6Widgets.dll`.
+- Clicking the table checkbox, the select-all box, the directory bar and
+  double-click-to-enter with a mouse; the filter/selection/skip screenshots use
+  diagnostic hooks.
+- The confirmation dialog under the host's four themes.
+- Rule chains (PowerRename-style) and Vim mode are not in this branch yet.
 
 ## Reproduce a screenshot
 

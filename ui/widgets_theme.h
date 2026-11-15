@@ -30,6 +30,7 @@ struct Theme
     QColor subtext;
     QColor faint;
     QColor hover;
+    QColor selection;
     QColor pressed;
     QColor control;
     QColor controlHover;

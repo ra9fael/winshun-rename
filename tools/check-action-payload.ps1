@@ -49,7 +49,7 @@ foreach ($key in @('batch', 'openFolder', 'openWindow'))
 
 # 3. The keys have to be published in `data`: an action can only receive what
 #    the row carried. One `withData` object per row must mention each key used.
-foreach ($key in @('batch', 'openFolder', 'openWindow'))
+foreach ($key in @('openFolder', 'openWindow'))
 {
     if ($text -notmatch ('"' + $key + '"\s*,'))
     {

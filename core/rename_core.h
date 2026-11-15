@@ -272,6 +272,7 @@ enum class OilErrorKind {
     MalformedAnchor,      // "/" with no digits
     NoAnchor,             // a non-blank line with no "/<id> " prefix -> create
     UnknownId,            // the id is not in the table (was it edited?)
+    DuplicateId,          // the same id appears on two lines
     DuplicateName,        // two entries would end up with the same leaf
     PathSeparator,        // the leaf contains "/" or "\"
     EmptyName,
@@ -304,7 +305,7 @@ struct OilParseResult {
 OilParseResult ParseOilBuffer(std::wstring_view buffer,
                               const std::vector<OilEntry>& idTable);
 
-enum class OilDiffKind { Rename, Rejected };
+enum class OilDiffKind { Rename, Rejected, Skipped };
 
 // One entry's outcome. Release one emits only Rename; everything oil.nvim would
 // express as create/delete/move/change is Rejected at this layer, so the
@@ -333,6 +334,9 @@ struct PlanItem {
     unsigned depth = 0;
     bool trimmed = false;
     bool hadNbsp = false;
+    // The id was absent from the text buffer. Safe skip: the item is left
+    // untouched, never deleted, and does not block the rest of the batch.
+    bool skipped = false;
     // Set when this row's target is the *current* name of another row that is
     // also moving: the batch must run that row first, or the executor finds the
     // target occupied and refuses. `after` is that row's id.

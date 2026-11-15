@@ -15,6 +15,7 @@
 
 #include <QApplication>
 #include <QByteArray>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -23,6 +24,7 @@
 #include <QPixmap>
 #include <QStyleFactory>
 #include <QString>
+#include <QTableView>
 #include <QTimer>
 #include <QVariantMap>
 
@@ -119,11 +121,23 @@ void GrabIfAsked(Ui* ui)
     const QString filter = qEnvironmentVariable("RENAME_GRAB_FILTER");
     if (!filter.isEmpty())
         ui->bridge->setFilter(filter);
+    const QString bufferFile = qEnvironmentVariable("RENAME_GRAB_BUFFER_FILE");
+    if (!bufferFile.isEmpty())
+    {
+        QFile file(bufferFile);
+        if (file.open(QIODevice::ReadOnly))
+            ui->bridge->setBuffer(QString::fromUtf8(file.readAll()));
+    }
     const QStringList rule = qEnvironmentVariable("RENAME_GRAB_RULE").split(QLatin1Char('\n'));
     if (rule.size() == 2)
         ui->bridge->setSingleRule(0, 0, rule[0], rule[1], true);
     if (qEnvironmentVariable("RENAME_GRAB_APPLY") == QLatin1String("1"))
         ui->bridge->apply();
+    if (qEnvironmentVariableIsSet("RENAME_GRAB_SELECT"))
+    {
+        if (auto* table = ui->window->findChild<QTableView*>())
+            table->selectRow(0);
+    }
 
     QTimer::singleShot(900, ui->window, [window = ui->window, grabTo] {
         const QPixmap pixmap = window->grab();

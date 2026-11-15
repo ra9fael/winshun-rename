@@ -55,8 +55,16 @@ private:
     void RefreshEmptyState();
     void RefreshFooter();
     void RefreshMode();
+    void Retranslate();
     void SyncRuleFields();
     void SyncTextEditor();
+    void SyncPath();
+
+    void NavigateTo(const QString& folder);
+    void GoUp();
+    void ReloadFolder();
+    void BrowseFolder();
+    bool ConfirmDiscard();
 
     void PushRule();
     void RequestMode(const QString& target);
@@ -71,8 +79,14 @@ private:
 
     Theme* m_theme = nullptr;
 
+    QLabel* m_title = nullptr;
     QToolButton* m_modeRules = nullptr;
     QToolButton* m_modeText = nullptr;
+
+    QLineEdit* m_path = nullptr;
+    QToolButton* m_up = nullptr;
+    QToolButton* m_browse = nullptr;
+    QToolButton* m_reload = nullptr;
 
     QStackedWidget* m_leftStack = nullptr;
 
@@ -82,6 +96,8 @@ private:
     QCheckBox* m_matchAll = nullptr;
     QCheckBox* m_caseSensitive = nullptr;
     QComboBox* m_scope = nullptr;
+    QLabel* m_scopeLabel = nullptr;
+    QLabel* m_formatLabel = nullptr;
     QToolButton* m_caseButtons[4] = {nullptr, nullptr, nullptr, nullptr};
 
     QPlainTextEdit* m_text = nullptr;

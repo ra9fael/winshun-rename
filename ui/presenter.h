@@ -43,6 +43,7 @@ struct Row {
     bool selected = true;
     bool isFolder = false;
     unsigned depth = 0;
+    bool skipped = false;       // absent from the text buffer: leave untouched
     std::wstring note;          // "trailing whitespace removed", "no extension; ..."
 };
 
@@ -50,6 +51,7 @@ struct Counts {
     int ready = 0;
     int unchanged = 0;
     int errors = 0;
+    int skipped = 0;
 };
 
 // A filter is a visibility rule, never an input-set change (RN-FR-10).
