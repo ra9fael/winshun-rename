@@ -37,6 +37,9 @@ jobs:
           cache: true
           cache-key-prefix: rename-qt-aqt-6-12-0
           setup-python: false
+          # aqtinstall 3.3.0 cannot resolve Qt 6.12's repository layout; pin the
+          # fixed master commit (same pin the other Qt plugins release with).
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@5a49f2b391ae8ee1d3c0dd87f8b33c1d49a4deb7
 
       - name: Locate the Qt kit
         id: qt
