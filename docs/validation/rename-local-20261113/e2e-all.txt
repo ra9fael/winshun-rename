@@ -1,0 +1,48 @@
+temp root: C:\Users\renfei\AppData\Local\Temp\ra9fael-rename-e2e-26712
+[  OK  ] enumerate finds both files
+[  OK  ] enumeration is not blocked
+[  OK  ] plan marks both rows ready
+[  OK  ] both files renamed on disk
+[  OK  ] final-one.txt exists
+[  OK  ] final-two.txt exists
+[  OK  ] original draft-one.txt is gone
+[  OK  ] existing target is refused
+[  OK  ] the existing target was not touched
+[  OK  ] the source was not renamed
+[  OK  ] no automatic 'name (1)' was created
+[  OK  ] parent and child both renamed
+[  OK  ] child landed under the renamed parent, deepest-first worked
+[  OK  ] identity case produced one result row
+[  OK  ] LS-S7-01 a listable folder does not block
+[  OK  ] LS-S7-01 folder yields its three direct children
+[  OK  ] LS-S7-01 the folder itself is not a row
+[  OK  ] LS-S7-03 a subfolder's contents are not listed
+[  OK  ] LS-S7-03 the subfolder is a row with isFolder
+[  OK  ] LS-S7-02 an empty folder yields no rows and no block
+[  OK  ] LS-S7-05 a file listed twice appears once
+[  OK  ] LS-S7-07 a missing root blocks the set
+[  OK  ] LS-S7-06 listContents=false keeps the folder itself as the row
+[  OK  ] LS-S7-09 three rows to work with
+[  OK  ] LS-S7-09 all three children are ready
+[  OK  ] LS-S7-09 three children renamed on disk
+[  OK  ] LS-S7-09 the files took their new names
+[  OK  ] LS-S7-09 the renamed subfolder kept its contents in place
+[  OK  ] LS-S7-10 three files in the chain folder
+[  OK  ] LS-S7-10 all three rows are plannable, not conflicts
+[  OK  ] LS-S7-10 the whole chain is renamed, nothing refused
+[  OK  ] LS-S7-10 the held name was released and then taken
+[  OK  ] LS-S7-10 the freed name was claimed by the waiting row
+[  OK  ] LS-S7-10 an unrelated row was renamed too
+[  OK  ] LS-S7-11 a name swap renames nothing
+[  OK  ] LS-S7-11 both rows of the swap are refused
+[  OK  ] LS-S7-11 both files kept their names
+[  OK  ] LS-S8-01 one file in, one row
+[  OK  ] LS-S8-01 one ready row
+[  OK  ] LS-S8-01 the target name is right
+[  OK  ] LS-S8-05 a find text that never occurs leaves the row unchanged
+[  OK  ] LS-S8-03 an existing target is refused
+[  OK  ] LS-S8-03 the source stayed put
+[  OK  ] LS-S8-04 a single file renames
+[  OK  ] LS-S8-04 the new name is on disk
+
+45 passed, 0 failed

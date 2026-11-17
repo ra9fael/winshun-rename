@@ -1,0 +1,15 @@
+started pid=28512 exe=D:\dev\github\winshun-dev\ra9fael.rename\rename.exe
+[  OK  ] initialize answered
+[  OK  ] initialize within 3000ms
+[  OK  ] initialize names the plugin
+initialize took 23 ms
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"copy":"rename ","icon":"glyph:U+E8AC","id":"rename.one","subtitle":"只改一个文件时用；改名结果就在这一行，Enter 执行","title":"改名：rename
+[  OK  ] query answered
+query returned 2 item(s)
+   - [rename.one] 改名：rename 原名 -> 新名  |  只改一个文件时用；改名结果就在这一行，Enter 执行
+   - [rename.here] 在此目录重命名…  |  打开重命名窗口，列出这个文件夹里的项目 · C:\Users\renfei\AppData\Local\Temp\hs-folder
+[  OK  ] folder row answered
+[  OK  ] folder row acted on its payload
+[  OK  ] shutdown answered
+
+all checks passed

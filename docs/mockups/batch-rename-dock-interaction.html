@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>批量重命名 · Dock 交互稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas:#e9edf2; --surface:#ffffff; --surface-2:#f7f8fa; --line:#d9dee6;
+      --text:#20242b; --muted:#687181; --faint:#88919e; --accent:#1468c8;
+      --hover:#eef5ff; --selected:#dbeafe; --selected-line:#a9cefa; --danger:#bf2f22;
+      --danger-bg:#fff1f0; --ok:#14803c; --ok-bg:#eaf7ef; --shadow:0 6px 18px rgba(26,40,60,.09);
+    }
+    * { box-sizing:border-box }
+    body { margin:0; min-width:780px; min-height:560px; height:100vh; overflow:hidden; background:var(--canvas);
+      color:var(--text); font:13px/1.45 "Segoe UI",system-ui,sans-serif }
+    button { font:inherit }
+    .app { height:100%; display:flex; flex-direction:column; background:var(--surface-2) }
+    .topbar { height:42px; flex:none; display:flex; align-items:center; gap:8px; padding:0 12px;
+      background:var(--surface); border-bottom:1px solid var(--line) }
+    .title { font-size:14px; font-weight:650; letter-spacing:.1px }
+    .spacer { flex:1 }
+    .button { border:1px solid var(--line); background:var(--surface); color:var(--text); border-radius:6px;
+      min-height:28px; padding:3px 10px; cursor:pointer }
+    .button:hover { background:var(--hover); border-color:#b8d5f7 }
+    .button:focus-visible,.row:focus-visible,.dropzone:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
+    .button.primary { border-color:#125cae; background:var(--accent); color:#fff; font-weight:600 }
+    .button.primary:hover { background:#0f5cb4 }
+    .button.vim-on { background:var(--selected); border-color:var(--selected-line); color:#074c98; font-weight:600 }
+    .pathbar { height:38px; flex:none; display:flex; align-items:center; gap:8px; padding:5px 12px;
+      border-bottom:1px solid var(--line); background:var(--surface) }
+    .path { flex:1; min-width:0; padding:4px 7px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      color:var(--muted); border:1px solid var(--line); border-radius:5px; background:#fcfcfd }
+    .workspace { flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:7px }
+    .dropzone { position:relative; min-width:280px; min-height:180px; display:flex; flex-direction:column; gap:7px }
+    .dropzone.over { border-radius:9px; outline:2px dashed var(--accent); outline-offset:-2px; background:rgba(20,104,200,.045) }
+    .panel { min-height:0; flex:1; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--line);
+      border-radius:8px; background:var(--surface); box-shadow:var(--shadow) }
+    .panel-head { height:32px; flex:none; display:flex; align-items:center; gap:7px; padding:0 8px; background:#fbfcfd;
+      border-bottom:1px solid var(--line); cursor:grab; user-select:none; -webkit-user-select:none }
+    .panel-head:active { cursor:grabbing }
+    .grip { color:#9ba4b0; font-size:16px; letter-spacing:-2px; transform:rotate(90deg); line-height:1 }
+    .panel-title { font-weight:600; font-size:12px }
+    .panel-meta { margin-left:auto; color:var(--faint); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .mode { padding:3px 6px; border-radius:4px; background:var(--selected); color:#0754a4; font:600 10px/1 ui-monospace,Consolas,monospace }
+    .file-head,.file-row { display:grid; grid-template-columns:34px minmax(110px,1fr) minmax(120px,1fr) 80px;
+      align-items:center; padding:0 9px; column-gap:7px }
+    .file-head { height:28px; flex:none; color:var(--faint); background:#fcfcfd; border-bottom:1px solid var(--line); font-size:11px }
+    .file-list { flex:1; min-height:0; overflow:auto; padding:3px }
+    .file-row { min-height:32px; border-radius:5px; cursor:default }
+    .file-row:hover { background:var(--hover) }
+    .file-row.selected { background:var(--selected); box-shadow:inset 0 0 0 1px var(--selected-line) }
+    .file-row.pending-delete { background:var(--danger-bg) }
+    .file-row.pending-delete .name,.file-row.pending-delete .target { color:var(--danger); text-decoration:line-through }
+    .file-row:focus { outline:none }
+    .check-cell { align-self:stretch; display:grid; place-items:center; cursor:pointer; border-radius:4px }
+    .check-cell:hover { background:rgba(20,104,200,.11) }
+    .check { width:15px; height:15px; display:grid; place-items:center; border:1px solid #aab3bf; border-radius:3px; background:#fff; color:#fff; font-size:11px }
+    .check.on { border-color:var(--accent); background:var(--accent) }
+    .name,.target,.state { overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .target { color:var(--muted) }.state { color:var(--faint); font-size:11px; text-align:right }
+    .ready .target,.ready .state { color:#075aaf }.pending-delete .state { color:var(--danger) }
+    .editor { flex:1; min-height:0; overflow:auto; padding:7px 10px; font:13px/1.75 ui-monospace,Consolas,"Cascadia Code",monospace; outline:none }
+    .line { white-space:pre; border-radius:4px; padding:0 5px; min-height:23px }
+    .line:hover { background:var(--hover) }.line.current { background:var(--selected); box-shadow:inset 0 0 0 1px var(--selected-line) }
+    .slash { color:#0d67bd; font-weight:700 }.unselected { color:#8d97a4 }.comment { color:#a14a14 }
+    .empty-note { color:var(--faint); padding:8px 5px; font:12px/1.5 "Segoe UI",sans-serif }
+    .status { flex:none; min-height:34px; display:flex; align-items:center; gap:8px; padding:5px 12px; border-top:1px solid var(--line);
+      background:var(--surface); color:var(--muted); font-size:12px }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none }.dot.error { background:var(--danger) }
+    .status-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0 }.status-text[title] { cursor:help }
+    dialog { width:min(560px,calc(100vw - 40px)); border:1px solid var(--line); border-radius:10px; padding:0; box-shadow:0 18px 60px rgba(16,26,40,.28) }
+    dialog::backdrop { background:rgba(20,30,44,.28) }.dialog-head{padding:13px 15px;border-bottom:1px solid var(--line);font-weight:650}.dialog-body{padding:14px 15px;color:var(--muted)}
+    .help-grid{display:grid;grid-template-columns:110px 1fr;gap:8px 14px}.help-grid b{color:var(--text)}code{padding:1px 4px;border-radius:3px;background:#eef1f5;color:#34404f}
+    .dialog-foot{display:flex;justify-content:flex-end;padding:10px 15px;border-top:1px solid var(--line)}
+    .toast { position:fixed; right:15px; bottom:46px; max-width:420px; padding:9px 11px; border:1px solid #e9b9b5; border-radius:7px;
+      background:#fff7f6; color:#8d281f; box-shadow:var(--shadow); font-size:12px; opacity:0; pointer-events:none; transform:translateY(8px); transition:.18s }
+    .toast.show { opacity:1; transform:translateY(0) }
+    @media (max-width:900px){.workspace{grid-template-columns:1fr;overflow:auto}.dropzone{min-height:260px}}
+  </style>
+</head>
+<body>
+<main class="app">
+  <header class="topbar">
+    <div class="title">批量重命名</div><span class="spacer"></span>
+    <button class="button vim-on" id="vimToggle" title="切换 Vim 模式">Vim</button>
+    <button class="button" id="helpButton">? 帮助</button>
+    <button class="button primary" id="runButton">执行…</button>
+  </header>
+  <div class="pathbar"><button class="button">←</button><button class="button">上一级</button><div class="path">C:\Users\you\Desktop\test</div><button class="button">刷新</button></div>
+  <section class="workspace" id="workspace">
+    <section class="dropzone" aria-label="左侧停靠区" tabindex="0" id="leftZone"></section>
+    <section class="dropzone" aria-label="右侧停靠区" tabindex="0" id="rightZone"></section>
+  </section>
+  <footer class="status"><span class="dot" id="dot"></span><span class="status-text" id="statusText" title="将重命名 2 项 · 1 项不变 · 1 项待删除（移至回收站）">将重命名 2 项 · 1 项不变 · 1 项待删除（移至回收站）</span><span class="spacer"></span><span class="mode" id="statusMode">NORMAL</span></footer>
+</main>
+
+<section class="panel" id="filesPanel" hidden>
+  <header class="panel-head" draggable="true"><span class="grip">⠿</span><span class="panel-title">文件列表</span><span class="panel-meta">点击整格勾选 · j/k · gg/G · dd</span></header>
+  <div class="file-head"><span></span><span>原始名</span><span>目标名</span><span>状态</span></div><div class="file-list" id="fileList" tabindex="0"></div>
+</section>
+<section class="panel" id="vimPanel" hidden>
+  <header class="panel-head" draggable="true"><span class="grip">⠿</span><span class="panel-title">文本</span><span class="panel-meta">删整行 = 待删除；/ 参与；// 不参与</span></header>
+  <div class="editor" id="editor" tabindex="0" aria-label="Vim 文本编辑器"></div>
+</section>
+
+<dialog id="helpDialog"><div class="dialog-head">批量重命名帮助</div><div class="dialog-body"><div class="help-grid">
+  <b>规则</b><span>通过菜单中的 <code>添加规则</code> 或 <code>载入预设</code> 打开规则编辑；主界面专注于文本与结果预览。</span>
+  <b>文本状态</b><span><code>/1 文件名</code> 参与；<code>//1 文件名</code> 不参与；删掉完整锚点行会使该项成为待删除。</span>
+  <b>待删除</b><span>执行后经 Windows Shell 移至回收站；确认框会明确列出删除数量。</span>
+  <b>Vim 列表</b><span><code>j/k</code> 上下、<code>gg/G</code> 首尾、<code>dd</code> 标记当前项目待删除；空格切换参与状态。</span>
+  <b>停靠</b><span>拖动面板标题栏即可将文本与文件列表交换左右位置；标题栏只作为拖拽手柄，不影响表格选择和文本编辑。</span>
+</div></div><div class="dialog-foot"><button class="button" onclick="helpDialog.close()">关闭</button></div></dialog>
+<dialog id="confirmDialog"><div class="dialog-head">确认执行</div><div class="dialog-body" id="confirmBody"></div><div class="dialog-foot"><button class="button" onclick="confirmDialog.close()">取消</button><button class="button primary" id="confirmRun">执行</button></div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+  const rows = [
+    {id:1, name:'report-draft.txt', target:'report-final.txt', state:'ready', selected:true},
+    {id:2, name:'notes.txt', target:'notes.txt', state:'same', selected:true},
+    {id:3, name:'photos', target:'photos-2026', state:'ready', selected:true, folder:true},
+    {id:4, name:'old-report.txt', target:'', state:'delete', selected:true}
+  ];
+  let current=0, pending='', vimEnabled=true, dragPanel=null;
+  const fileList=document.querySelector('#fileList'), editor=document.querySelector('#editor');
+  const filesPanel=document.querySelector('#filesPanel'), vimPanel=document.querySelector('#vimPanel');
+  const leftZone=document.querySelector('#leftZone'), rightZone=document.querySelector('#rightZone');
+  function stateName(s){return s==='ready'?'将改名':s==='delete'?'待删除':'不变'}
+  function render(){
+    fileList.innerHTML='';
+    rows.forEach((r,i)=>{
+      const el=document.createElement('div'); el.className=`file-row ${r.state==='ready'?'ready':''} ${r.state==='delete'?'pending-delete':''} ${i===current?'selected':''}`; el.tabIndex=-1;
+      el.innerHTML=`<button class="check-cell" aria-label="切换 ${r.name} 的参与状态"><span class="check ${r.selected?'on':''}">${r.selected?'✓':''}</span></button><span class="name">${r.name}${r.folder?'/':''}</span><span class="target">${r.state==='delete'?'待删除（移至回收站）':(r.target||'—')}</span><span class="state">${stateName(r.state)}</span>`;
+      el.querySelector('.check-cell').onclick=e=>{e.stopPropagation();r.selected=!r.selected;render();};
+      el.onclick=()=>{current=i;render();fileList.focus();}; fileList.append(el);
+    });
+    editor.innerHTML='';
+    rows.forEach((r,i)=>{if(r.state==='delete')return;const l=document.createElement('div');l.className='line '+(i===current?'current':'');l.innerHTML=`<span class="${r.selected?'slash':'unselected'}">${r.selected?'/':'//'}</span>${r.id} ${r.target||r.name}${r.folder?'/':''}`;l.onclick=()=>{current=i;render();editor.focus()};editor.append(l)});
+    const ready=rows.filter(r=>r.state==='ready').length, same=rows.filter(r=>r.state==='same').length, del=rows.filter(r=>r.state==='delete').length;
+    const text=`将重命名 ${ready} 项 · ${same} 项不变${del?` · ${del} 项待删除（移至回收站）`:''}`;statusText.textContent=text;statusText.title=text;runButton.textContent=del?`执行（含删除 ${del} 项）…`:'执行…';
+  }
+  function toast(message){toastEl.textContent=message;toastEl.classList.add('show');setTimeout(()=>toastEl.classList.remove('show'),3600)}
+  function select(delta){current=Math.max(0,Math.min(rows.length-1,current+delta));render();fileList.children[current]?.scrollIntoView({block:'nearest'})}
+  function deleteCurrent(){if(!rows[current])return;rows[current].state='delete';render()}
+  fileList.addEventListener('keydown',e=>{
+    if(!vimEnabled)return; const now=Date.now();
+    if(e.key==='j'){select(1)} else if(e.key==='k'){select(-1)} else if(e.key==='G'){current=rows.length-1;render()}
+    else if(e.key==='g'){if(pending.value==='g'&&now-pending.time<600){current=0;render();pending=''}else pending={value:'g',time:now}}
+    else if(e.key==='d'){if(pending.value==='d'&&now-pending.time<600){deleteCurrent();pending=''}else pending={value:'d',time:now}}
+    else if(e.key===' '){rows[current].selected=!rows[current].selected;render()} else return; e.preventDefault();
+  });
+  editor.addEventListener('pointerdown',()=>{
+    // Mock of the required fix: clicking blank text clamps to an existing real line rather than creating a phantom final line.
+    current=Math.min(current,Math.max(0,rows.length-1)); render();
+  });
+  vimToggle.onclick=()=>{vimEnabled=!vimEnabled;vimToggle.classList.toggle('vim-on',vimEnabled);statusMode.style.visibility=vimEnabled?'visible':'hidden'};
+  helpButton.onclick=()=>helpDialog.showModal();
+  runButton.onclick=()=>{const ready=rows.filter(r=>r.state==='ready').length,del=rows.filter(r=>r.state==='delete').length;confirmBody.textContent=`将重命名 ${ready} 项。${del?`\n将删除 ${del} 项（移至回收站，可在资源管理器中 Ctrl+Z 撤消）。`:''}\n\n确定执行吗？`;confirmDialog.showModal()};
+  confirmRun.onclick=()=>{confirmDialog.close();const renamed=rows.filter(r=>r.state==='ready').length, deleted=rows.filter(r=>r.state==='delete').length;
+    const kept=rows.filter(r=>r.state!=='delete');kept.forEach(r=>{if(r.state==='ready'){r.name=r.target;r.state='same'}});rows.splice(0,rows.length,...kept);current=0;render();
+    dot.classList.remove('error');const done=`已重命名 ${renamed} 项，已删除 ${deleted} 项`;statusText.textContent=done;statusText.title=done;toast('执行完成后已重新枚举文件；列表保持可继续操作。')};
+  function movePanel(panel,zone){const active=document.activeElement; if('moveBefore' in Element.prototype)zone.moveBefore(panel,null);else zone.append(panel); if(active&&active.focus)active.focus({preventScroll:true});}
+  document.querySelectorAll('.panel-head').forEach(head=>{head.addEventListener('dragstart',e=>{dragPanel=head.closest('.panel');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',dragPanel.id)});head.addEventListener('dragend',()=>dragPanel=null)});
+  document.querySelectorAll('.dropzone').forEach(zone=>{zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('over')});zone.addEventListener('dragleave',()=>zone.classList.remove('over'));zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('over');if(dragPanel&&dragPanel.parentElement!==zone)movePanel(dragPanel,zone)})});
+  movePanel(vimPanel,leftZone); movePanel(filesPanel,rightZone); const toastEl=document.querySelector('#toast'); render();
+</script>
+</body>
+</html>

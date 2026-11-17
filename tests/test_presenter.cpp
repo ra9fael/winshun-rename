@@ -206,8 +206,8 @@ TEST_CASE(PresenterTextModeBuildsFromBuffer)
     presenter.SetMode(Mode::Text);
     presenter.SetOilTable(oilTable());
 
-    // The generated buffer is "/1 one.txt\n/2 two.txt\n"; edit the first leaf.
-    presenter.SetBuffer(L"/1 uno.txt\n/2 two.txt\n");
+    // The generated buffer is "y 1 one.txt\ny 2 two.txt"; edit the first leaf.
+    presenter.SetBuffer(L"y 1 uno.txt\ny 2 two.txt\n");
 
     const Counts counts = presenter.CurrentCounts();
     CHECK_EQ(counts.ready, 1);
@@ -215,19 +215,110 @@ TEST_CASE(PresenterTextModeBuildsFromBuffer)
     CHECK(presenter.CanExecute());
 }
 
-TEST_CASE(PresenterTextModeSkipsVanishedEntry)
+TEST_CASE(PresenterTextModeDStateMarksPendingDelete)
 {
-    // A vanished line is a safe skip: the second file stays untouched and the
-    // first can still be renamed.
+    // "d" is how the buffer asks for a delete; the first file can still be renamed.
     Presenter presenter;
     presenter.SetMode(Mode::Text);
     presenter.SetOilTable(oilTable());
-    presenter.SetBuffer(L"/1 uno.txt\n");   // entry 2 vanished -> skip
+    presenter.SetBuffer(L"y 1 uno.txt\nd 2 two.txt");
 
     CHECK(presenter.CanExecute());
     CHECK(!presenter.Plan().HasBlockingError());
     CHECK_EQ(presenter.CurrentCounts().ready, 1);
-    CHECK_EQ(presenter.CurrentCounts().skipped, 1);
+    CHECK_EQ(presenter.CurrentCounts().toDelete, 1);
+
+    const std::vector<Row> order = presenter.ExecutionOrder();
+    CHECK_EQ(order.size(), std::size_t(2));
+    CHECK(order[1].pendingDelete);
+}
+
+TEST_CASE(PresenterTextModeRejectsARemovedLine)
+{
+    // Removing a line is no longer a delete gesture: it blocks, because an
+    // accidental removal must never delete a file.
+    Presenter presenter;
+    presenter.SetMode(Mode::Text);
+    presenter.SetOilTable(oilTable());
+    presenter.SetBuffer(L"y 1 uno.txt");
+
+    CHECK(!presenter.CanExecute());
+    CHECK(presenter.Plan().HasBlockingError());
+    CHECK_EQ(presenter.CurrentCounts().toDelete, 0);
+}
+
+TEST_CASE(PresenterTextModeNStateUnselectsRow)
+{
+    Presenter presenter;
+    presenter.SetMode(Mode::Text);
+    presenter.SetOilTable(oilTable());
+    presenter.SetBuffer(L"n 1 one.txt\ny 2 two.txt");
+
+    const std::vector<Row> rows = presenter.VisibleRows();
+    CHECK_EQ(rows.size(), std::size_t(2));
+    CHECK(!rows[0].selected);
+    CHECK(rows[1].selected);
+}
+
+TEST_CASE(UncheckedRowsDoNotCountTowardsTheBatch)
+{
+    // The badge, the confirmation and the executor must all agree: an unchecked
+    // row is not part of the batch, so it cannot inflate "N items to rename".
+    Presenter presenter;
+    ControlState state;
+    state.chain = renameRule(L"one", L"1st");
+    presenter.SetControlState(state);
+    presenter.SetItems({item("1", L"one.txt"), item("2", L"two.txt")});
+
+    CHECK_EQ(presenter.CurrentCounts().ready, 1);
+    CHECK(presenter.CanExecute());
+
+    presenter.SetRowSelected("2", false);
+    CHECK_EQ(presenter.CurrentCounts().ready, 1);
+    CHECK_EQ(presenter.ExecutionOrder().size(), std::size_t(1));
+}
+
+TEST_CASE(AnUncheckedErrorDoesNotBlockTheBatch)
+{
+    // Row 2 is unchecked *and* carries an invalid name: it is outside the batch,
+    // so it must not stop row 1 from being renamed.
+    Presenter presenter;
+    presenter.SetMode(Mode::Text);
+    presenter.SetOilTable(oilTable());
+    presenter.SetBuffer(L"y 1 renamed.txt\nn 2 bad?.txt");
+
+    const Counts counts = presenter.CurrentCounts();
+    CHECK_EQ(counts.ready, 1);
+    CHECK_EQ(counts.errors, 0);
+    CHECK(presenter.CanExecute());
+    CHECK_EQ(presenter.ExecutionOrder().size(), std::size_t(1));
+
+    // Checking it brings the error back into the batch, and it blocks again.
+    presenter.SetRowSelected("2", true);
+    CHECK_EQ(presenter.CurrentCounts().errors, 1);
+    CHECK(!presenter.CanExecute());
+}
+
+TEST_CASE(PresenterRestoresPendingDeleteInOilOrder)
+{
+    Presenter presenter;
+    presenter.SetMode(Mode::Text);
+    presenter.SetOilTable(oilTable());
+    presenter.SetBuffer(L"y 1 renamed-one.txt\nd 2 two.txt");
+
+    CHECK(presenter.RestorePendingDelete("2"));
+    CHECK_EQ(presenter.Buffer(), std::wstring(L"y 1 renamed-one.txt\ny 2 two.txt"));
+    CHECK_EQ(presenter.CurrentCounts().toDelete, 0);
+}
+
+TEST_CASE(PresenterRestoreKeepsUnselectedState)
+{
+    Presenter presenter;
+    presenter.SetMode(Mode::Text);
+    presenter.SetOilTable(oilTable());
+    presenter.SetBuffer(L"n 1 one.txt\nd 2 two.txt");
+    CHECK(presenter.RestorePendingDelete("2"));
+    CHECK_EQ(presenter.Buffer(), std::wstring(L"n 1 one.txt\ny 2 two.txt"));
 }
 
 TEST_CASE(PresenterTextModeRefusesUnauthoredCreate)
@@ -236,7 +327,7 @@ TEST_CASE(PresenterTextModeRefusesUnauthoredCreate)
     Presenter presenter;
     presenter.SetMode(Mode::Text);
     presenter.SetOilTable(oilTable());
-    presenter.SetBuffer(L"/1 one.txt\n/2 two.txt\nbrand-new.txt\n");
+    presenter.SetBuffer(L"y 1 one.txt\ny 2 two.txt\nbrand-new.txt\n");
 
     CHECK(!presenter.CanExecute());
 }
@@ -257,7 +348,7 @@ TEST_CASE(PresenterModesAgreeOnIllegalName)
     table[0].id = 1;
     table[0].originalLeaf = L"orig.txt";
     textPresenter.SetOilTable(table);
-    textPresenter.SetBuffer(L"/1 bad?.txt\n");
+    textPresenter.SetBuffer(L"y 1 bad?.txt\n");
 
     CHECK(!controlPresenter.CanExecute());
     CHECK(!textPresenter.CanExecute());
@@ -288,9 +379,9 @@ TEST_CASE(PresenterBufferResetsAfterExecution)
     Presenter presenter;
     presenter.SetMode(Mode::Text);
     presenter.SetOilTable(oilTable());
-    presenter.SetBuffer(L"/1 uno.txt\n/2 two.txt\n");
+    presenter.SetBuffer(L"y 1 uno.txt\ny 2 two.txt\n");
 
-    presenter.ApplyExecutedResults({{"1", L"uno.txt"}});
+    presenter.ApplyExecutedResults({{"1", L"uno.txt"}}, {});
 
     CHECK(presenter.Buffer().find(L"uno.txt") != std::wstring::npos);
     CHECK(presenter.Buffer().find(L"one.txt") == std::wstring::npos);

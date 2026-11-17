@@ -68,6 +68,14 @@ QString Rgba(const QColor& colour)
         .arg(QString::number(colour.alphaF(), 'f', 3));
 }
 
+QColor Blend(const QColor& base, const QColor& overlay, int overlayPercent)
+{
+    const int p = qBound(0, overlayPercent, 100);
+    return QColor((base.red() * (100 - p) + overlay.red() * p) / 100,
+                  (base.green() * (100 - p) + overlay.green() * p) / 100,
+                  (base.blue() * (100 - p) + overlay.blue() * p) / 100);
+}
+
 } // namespace
 
 Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize,
@@ -90,17 +98,25 @@ Theme Theme::From(const QVariantMap& look, bool dark, const QString& uiSize,
     t.text = LookColor(look, "text", dark ? QColor(QStringLiteral("#F3F3F3")) : QColor(QStringLiteral("#1B1B1B")));
     t.subtext = LookColor(look, "subtext", dark ? QColor(QStringLiteral("#B8B8B8")) : QColor(QStringLiteral("#666666")));
     t.faint = LookColor(look, "faint", QColor(QStringLiteral("#8A8A8A")));
-    t.hover = LookColor(look, "hover", dark ? QColor(QStringLiteral("#292929")) : QColor(QStringLiteral("#F1F1F1")));
-    t.selection = LookColor(look, "selection", dark ? QColor(QStringLiteral("#2F2F2F")) : QColor(QStringLiteral("#EAEAEA")));
-    t.pressed = LookColor(look, "pressed", dark ? QColor(QStringLiteral("#323232")) : QColor(QStringLiteral("#E8E8E8")));
     t.control = LookColor(look, "control", dark ? QColor(QStringLiteral("#373737")) : QColor(QStringLiteral("#FFFFFF")));
+    t.accent = LookColor(look, "accent", dark ? QColor(QStringLiteral("#4CC2FF")) : QColor(QStringLiteral("#0067C0")));
+    // Some native-look payloads expose black as a generic hover token. Blend
+    // against the real surface unless that colour remains readable under text.
+    const QColor hoverFallback = Blend(t.control, t.accent, dark ? 18 : 8);
+    const QColor selectionFallback = Blend(t.background, t.accent, dark ? 30 : 16);
+    const QColor hostHover = LookColor(look, "hover", hoverFallback);
+    const QColor hostSelection = LookColor(look, "selection", selectionFallback);
+    const bool hostHoverTooDark = !dark && hostHover.lightness() < 96;
+    const bool hostSelectionTooDark = !dark && hostSelection.lightness() < 96;
+    t.hover = hostHoverTooDark ? hoverFallback : hostHover;
+    t.selection = hostSelectionTooDark ? selectionFallback : hostSelection;
+    t.pressed = LookColor(look, "pressed", dark ? QColor(QStringLiteral("#323232")) : QColor(QStringLiteral("#E8E8E8")));
     t.controlHover = LookColor(look, "controlHover", dark ? QColor(QStringLiteral("#3C3C3C")) : QColor(QStringLiteral("#F6F6F6")));
     t.controlBorder = LookColor(look, "controlBorder", dark ? QColor(QStringLiteral("#444444")) : QColor(QStringLiteral("#D5D5D5")));
     t.inputFocused = LookColor(look, "inputFocused", dark ? QColor(QStringLiteral("#1F1F1F")) : QColor(QStringLiteral("#FFFFFF")));
     t.menuBackground = LookColor(look, "menuBackground", dark ? QColor(QStringLiteral("#2C2C2C")) : QColor(QStringLiteral("#F9F9F9")));
     t.menuHover = LookColor(look, "menuHover", dark ? QColor(QStringLiteral("#3A3A3A")) : QColor(QStringLiteral("#ECECEC")));
     t.menuEdge = LookColor(look, "menuEdge", dark ? QColor(QStringLiteral("#3A3A3A")) : QColor(QStringLiteral("#E5E5E5")));
-    t.accent = LookColor(look, "accent", dark ? QColor(QStringLiteral("#4CC2FF")) : QColor(QStringLiteral("#0067C0")));
     t.accentFill = LookColor(look, "accentFill", QColor(QStringLiteral("#0067C0")));
     t.accentText = LookColor(look, "accentText", QColor(QStringLiteral("#FFFFFF")));
     t.danger = LookColor(look, "danger", dark ? QColor(QStringLiteral("#FF99A4")) : QColor(QStringLiteral("#C42B1C")));
@@ -212,15 +228,59 @@ QLabel#caption, QLabel#footer, QLabel#small {
     color: @subtext;
     background: transparent;
 }
+QLabel#cursorPosition {
+    color: @subtext;
+    background: transparent;
+}
 QLabel#topTitle {
     color: @text;
     font-weight: 600;
     background: transparent;
 }
+QLabel#vimCommandLine {
+    background: @background;
+    border-top: 1px solid @softDivider;
+    padding: 0 0 2px 7px;
+}
 QLabel#empty {
     background: transparent;
     padding: 24px;
 }
+QStatusBar {
+    background: @background;
+    border-top: 1px solid @softDivider;
+    padding: 3px 8px;
+}
+QStatusBar::item { border: none; }
+QStatusBar QFrame {
+    background: @softDivider;
+    color: @softDivider;
+    border: none;
+}
+QDockWidget { color: @subtext; }
+QDockWidget::title {
+    background: @background;
+    padding: 5px 12px;
+    border-bottom: 1px solid @softDivider;
+}
+QMainWindow::separator {
+    background: @softDivider;
+    width: 3px;
+    height: 3px;
+}
+QMainWindow::separator:hover { background: @accent; }
+QTabBar#editorTabs::tab {
+    background: transparent;
+    color: @subtext;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 7px 18px;
+}
+QTabBar#editorTabs::tab:selected {
+    color: @text;
+    border-bottom-color: @accent;
+}
+QTabBar#editorTabs::tab:hover { background: @controlHover; }
 QLineEdit, QComboBox, QPlainTextEdit {
     background: @control;
     color: @text;
@@ -269,6 +329,32 @@ QPushButton#primary {
     font-weight: 600;
     padding: 6px 16px;
 }
+/* The status-bar action chips: same chip language as the Vim toggle and
+   badges, with the accent kept for the primary action only. */
+QPushButton#statusApply {
+    background: @control;
+    color: @text;
+    border: 1px solid @controlBorder;
+    border-radius: @controlRadius;
+    padding: 2px 10px;
+    font-weight: 600;
+}
+QPushButton#statusApply:hover {
+    background: @controlHover;
+    border-color: @accent;
+    color: @accentText;
+}
+QPushButton#statusApply:pressed {
+    background: @accentFill;
+    color: @accentText;
+    border-color: @accentFill;
+}
+QPushButton#statusApply:disabled {
+    background: @control;
+    color: @faint;
+    border: 1px solid @controlBorder;
+    font-weight: normal;
+}
 QPushButton#primary:hover {
     background: @accent;
     border-color: @accent;
@@ -295,17 +381,17 @@ QToolButton#modeButton:checked {
     color: @accentText;
     font-weight: 600;
 }
-QToolButton#chipButton {
+QToolButton#chipButton, QToolButton#vimToggle {
     background: @control;
     color: @text;
     border: 1px solid @controlBorder;
     border-radius: @controlRadius;
     padding: 4px 8px;
 }
-QToolButton#chipButton:hover {
+QToolButton#chipButton:hover, QToolButton#vimToggle:hover {
     background: @controlHover;
 }
-QToolButton#chipButton:checked {
+QToolButton#chipButton:checked, QToolButton#vimToggle:checked {
     background: @accentFill;
     color: @accentText;
     border-color: @accentFill;
@@ -389,6 +475,7 @@ QToolTip {
     replace("@accentText", accentText);
     replace("@accent", accent);
     replace("@inputFocused", inputFocused);
+    qss.replace(QStringLiteral("@softDivider"), Rgba(QColor(text.red(), text.green(), text.blue(), 24)));
     replace("@divider", divider);
     replace("@subtext", subtext);
     replace("@faint", faint);

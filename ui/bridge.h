@@ -40,7 +40,7 @@ public:
         IsFolderRole,
         DepthRole,
         NoteRole,
-        SkippedRole,
+        PendingDeleteRole,
     };
 
     explicit PreviewModel(QObject* parent = nullptr);
@@ -123,7 +123,7 @@ class Bridge : public QObject
     Q_PROPERTY(QString blockingReason READ blockingReason NOTIFY changed)
     Q_PROPERTY(int readyCount READ readyCount NOTIFY countsChanged)
     Q_PROPERTY(int unchangedCount READ unchangedCount NOTIFY countsChanged)
-    Q_PROPERTY(int skippedCount READ skippedCount NOTIFY countsChanged)
+    Q_PROPERTY(int deleteCount READ deleteCount NOTIFY countsChanged)
     Q_PROPERTY(int errorCount READ errorCount NOTIFY countsChanged)
     Q_PROPERTY(bool canExecute READ canExecute NOTIFY changed)
     Q_PROPERTY(int visibleCount READ visibleCount NOTIFY changed)
@@ -163,7 +163,7 @@ public:
     QString blockingReason() const;
     int readyCount() const;
     int unchangedCount() const;
-    int skippedCount() const;
+    int deleteCount() const;
     int errorCount() const;
     bool canExecute() const;
     int visibleCount() const;
@@ -253,6 +253,15 @@ public:
     Q_INVOKABLE bool forceSwitchMode(const QString& mode);
     Q_INVOKABLE void setFilter(const QString& filter);
     Q_INVOKABLE void toggleRow(const QString& id, bool selected);
+    // Text/list Vim delete: remove the entry anchor from the buffer so the
+    // shared oil plan renders it as pending delete. It is not executed until
+    // the ordinary confirmation step.
+    Q_INVOKABLE void markRowForDelete(const QString& id);
+    Q_INVOKABLE bool restorePendingDelete(const QString& id);
+    // Undo edits from the table: one row back to its on-disk name, or every name
+    // and delete mark while keeping the selection. Both rewrite the text buffer.
+    Q_INVOKABLE bool revertRow(const QString& id);
+    Q_INVOKABLE bool revertAllEdits();
     Q_INVOKABLE void selectAll(bool selected);
     // A case transform over the whole batch: 0 none, 1 lower, 2 upper,
     // 3 capitalize, 4 title. Same flags the core already implements.

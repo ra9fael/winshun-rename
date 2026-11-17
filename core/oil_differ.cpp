@@ -1,10 +1,9 @@
 // oil_differ.cpp — parsed lines to rename diffs (design §3.8).
 //
-// The layering follows oil.nvim's (RNF-30) with one deliberate narrowing: the
-// action layer only ever sees `Rename`. oil.nvim also produces create, delete,
-// move and change; release one turns all of those into Rejected at *this* layer,
-// so the executor has a single code path and the test surface stays small
-// (RN-FR-19, RN-T2-07).
+// The layering follows oil.nvim's (RNF-30) with two deliberate narrowings: the
+// action layer only ever sees Rename or Delete, and a Delete must be spelled out
+// with the "d" state. Removing a line is no longer a delete — that gesture was too
+// easy to trigger by accident and too hard to undo (RN-FR-19, RN-T2-07).
 #include "core/rename_core.h"
 
 #include <algorithm>
@@ -21,6 +20,10 @@ std::wstring Fold(std::wstring_view text)
         ch = static_cast<wchar_t>(std::towlower(static_cast<wint_t>(ch)));
     return out;
 }
+
+// "y" renames, "n" skips (the row stays in the batch's view but not in its set),
+// "d" deletes.
+bool Selected(const OilLine& line) { return line.state != OilState::Skip; }
 
 } // namespace
 
@@ -40,7 +43,7 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
     {
         if (std::find(seenIds.begin(), seenIds.end(), line.id) != seenIds.end())
         {
-            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::DuplicateId, line.line});
+            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::DuplicateId, line.line, Selected(line)});
             continue;
         }
         seenIds.push_back(line.id);
@@ -49,41 +52,41 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
                                      [&](const OilEntry& entry) { return entry.id == line.id; });
         if (it == idTable.end())
         {
-            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::UnknownId, line.line});
+            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::UnknownId, line.line, Selected(line)});
             continue;
         }
 
         seen[static_cast<std::size_t>(std::distance(idTable.begin(), it))] = true;
 
+        // A delete names no target, so the leaf it carries is ignored: the row is
+        // on its way out and a half-typed name must not turn it into a rename.
+        if (line.state == OilState::Delete)
+        {
+            diffs.push_back({OilDiffKind::Delete, line.id, {}, OilErrorKind::MissingLine, line.line, true});
+            continue;
+        }
+
         const std::wstring folded = Fold(line.leaf);
         if (std::find(foldedNames.begin(), foldedNames.end(), folded) != foldedNames.end())
         {
-            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::DuplicateName, line.line});
+            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::DuplicateName, line.line, Selected(line)});
             continue;
         }
         foldedNames.push_back(folded);
 
-        // A directory marker that disagrees with the table would be a type
-        // change, not a rename. Refuse rather than silently ignoring the slash.
-        if (line.isFolder != it->isFolder)
-        {
-            diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::PathSeparator, line.line});
-            continue;
-        }
-
         if (line.leaf == it->originalLeaf)
             continue;   // untouched: no diff, no action
 
-        diffs.push_back({OilDiffKind::Rename, line.id, line.leaf, OilErrorKind::NoAnchor, line.line});
+        diffs.push_back({OilDiffKind::Rename, line.id, line.leaf, OilErrorKind::NoAnchor, line.line, Selected(line)});
     }
 
-    // A missing line is a safe skip, not a delete: a rename tool must never
-    // remove a file because a text line vanished. The UI says how many rows are
-    // skipped instead.
+    // An id that is not in the buffer any more is a mistake, not a delete: the
+    // "d" state exists precisely so an accidental line removal cannot delete a
+    // file. Reported per row so the user sees which one went missing.
     for (std::size_t i = 0; i < idTable.size(); ++i)
     {
         if (!seen[i])
-            diffs.push_back({OilDiffKind::Skipped, idTable[i].id, {}, OilErrorKind::DeleteUnsupported, 0});
+            diffs.push_back({OilDiffKind::Rejected, idTable[i].id, {}, OilErrorKind::MissingLine, 0, true});
     }
 
     return diffs;
@@ -115,6 +118,16 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
         item.isFolder = entry.isFolder;
         item.depth = entry.depth;
 
+        // The line's state is the table's checkbox: one state, two views.
+        for (const OilLine& line : parsed.lines)
+        {
+            if (line.id == entry.id)
+            {
+                item.selected = line.state != OilState::Skip;
+                break;
+            }
+        }
+
         const auto diff = std::find_if(diffs.begin(), diffs.end(),
                                        [&](const OilDiff& d) { return d.id == entry.id; });
 
@@ -122,16 +135,18 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
         {
             item.status = Status::Unchanged;
         }
-        else if (diff->kind == OilDiffKind::Skipped)
+        else if (diff->kind == OilDiffKind::Delete)
         {
-            item.status = Status::Unchanged;
-            item.skipped = true;
+            // The row says "d": that is an explicit delete, not a rename to
+            // nothing. The executor gets an explicit action so it never has to
+            // infer one from an empty name.
+            item.status = Status::Ready;
+            item.action = Action::Delete;
         }
         else if (diff->kind == OilDiffKind::Rejected)
         {
             switch (diff->reason)
             {
-            case OilErrorKind::DeleteUnsupported:
             case OilErrorKind::UnknownId:
                 item.status = Status::ErrorBadRule;
                 break;
@@ -148,6 +163,11 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
             case OilErrorKind::EmptyName:
                 item.status = Status::ErrorEmptyName;
                 break;
+            case OilErrorKind::MissingLine:
+            case OilErrorKind::UnknownState:
+            case OilErrorKind::NoAnchor:
+            case OilErrorKind::MalformedAnchor:
+            case OilErrorKind::LinkUnsupported:
             default:
                 item.status = Status::ErrorBadRule;
                 break;
@@ -170,13 +190,14 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
             }
         }
 
-        // A parse error anywhere makes every otherwise-unchanged row
-        // untrustworthy, including a skipped one: a typo must not let the batch
-        // through with a partial view of the buffer.
-        if (!errorLines.empty() && (item.status == Status::Unchanged || item.skipped))
+        // A parse error anywhere makes every otherwise-harmless row
+        // untrustworthy, deletions included: a typo must not let the batch
+        // through with a partial view of the buffer, and it must never turn a
+        // half-typed anchor into a delete.
+        if (!errorLines.empty() && (item.status == Status::Unchanged || item.action == Action::Delete))
         {
             item.status = Status::ErrorBadRule;
-            item.skipped = false;
+            item.action = Action::Rename;
         }
 
         plan.items.push_back(std::move(item));

@@ -77,6 +77,29 @@ bool HasInvalidCharacter(std::wstring_view leaf)
     return false;
 }
 
+// CON, PRN, AUX, NUL, COM1-9 and LPT1-9 are device names, not files: Windows
+// refuses to create them whatever the extension is ("NUL.txt" is still NUL). The
+// check is on the stem, before the first dot.
+bool IsReservedDeviceName(std::wstring_view leaf)
+{
+    std::wstring stem;
+    for (wchar_t ch : leaf)
+    {
+        if (ch == L'.')
+            break;
+        stem.push_back(static_cast<wchar_t>(std::towupper(static_cast<wint_t>(ch))));
+    }
+    // Trailing spaces are legal in the stem but Windows ignores them.
+    while (!stem.empty() && stem.back() == L' ')
+        stem.pop_back();
+
+    if (stem == L"CON" || stem == L"PRN" || stem == L"AUX" || stem == L"NUL")
+        return true;
+    if (stem.size() == 4 && (stem.starts_with(L"COM") || stem.starts_with(L"LPT")))
+        return stem[3] >= L'1' && stem[3] <= L'9';
+    return false;
+}
+
 bool ExceedsLength(std::size_t pathLength,
                    std::wstring_view originalLeaf,
                    std::wstring_view targetLeaf,
@@ -142,6 +165,15 @@ FinalizeResult Finalize(std::wstring_view candidate,
     }
 
     if (HasInvalidCharacter(text))
+    {
+        out.text = std::move(text);
+        out.status = Status::ErrorInvalidCharacter;
+        return out;
+    }
+
+    // A reserved device name is a name Windows cannot create; treat it like an
+    // invalid character rather than letting the executor fail at the last step.
+    if (IsReservedDeviceName(text))
     {
         out.text = std::move(text);
         out.status = Status::ErrorInvalidCharacter;

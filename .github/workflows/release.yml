@@ -1,0 +1,147 @@
+# release.yml — build, test, package and publish on a version tag.
+#
+# Same shape as the other plugins' release workflow: pushing a vX.Y.Z tag runs
+# the whole suite on a clean runner, packages the tested binaries with
+# tools/pack.ps1, and attaches the .wsplugin plus its sha256 to a GitHub
+# release. workflow_dispatch builds and verifies without publishing.
+name: build-and-release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install matching Qt kit
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: win64_msvc2022_64
+          cache: true
+          cache-key-prefix: rename-qt-aqt-6-12-0
+          setup-python: false
+
+      - name: Locate the Qt kit
+        id: qt
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = $env:QT_ROOT_DIR
+          if (-not $root -or -not (Test-Path (Join-Path $root 'bin'))) {
+            $qmake = Get-ChildItem 'C:\Qt' -Recurse -Filter 'qmake.exe' -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FullName -match 'msvc2022_64' } | Select-Object -First 1
+            if ($qmake) { $root = $qmake.Directory.Parent.FullName }
+          }
+          if (-not $root -or -not (Test-Path (Join-Path $root 'bin\Qt6Widgets.dll'))) {
+            throw "Qt 6.12 msvc2022_64 kit not found (QT_ROOT_DIR='$env:QT_ROOT_DIR')"
+          }
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "root=$root`n")
+          Write-Output "Qt kit: $root"
+
+      - name: Validate tag, manifest and changelog
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content package/plugin.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $version = $manifest.version
+          if (-not ($version -match '^\d+\.\d+\.\d+$')) { throw "Bad version '$version'" }
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:RELEASE_TAG -ne "v$version") {
+            throw "Tag '$($env:RELEASE_TAG)' does not match manifest version v$version"
+          }
+          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          if ($changelog -notmatch "(?m)^## \[$version\]") {
+            throw "CHANGELOG.md has no [$version] section"
+          }
+          Write-Output "Validated $($manifest.id) $version"
+
+      - name: Configure
+        run: cmake -S . -B build/ci -A x64 -DRENAME_BUILD_QT=ON -DCMAKE_PREFIX_PATH="${{ steps.qt.outputs.root }}"
+
+      - name: Build
+        run: cmake --build build/ci --config Release --parallel
+
+      - name: Run the tests
+        run: ctest --test-dir build/ci -C Release --output-on-failure --no-tests=error
+
+      - name: Bundle Qt6Widgets.dll beside rename.exe
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Qt Widgets is not in WinShun's shared-Qt contract yet: the package
+          # carries the one extra DLL beside the exe (see pack.ps1).
+          Copy-Item (Join-Path '${{ steps.qt.outputs.root }}' 'bin\Qt6Widgets.dll') .
+          Write-Output 'Copied Qt6Widgets.dll'
+
+      - name: Package the tested binaries
+        run: pwsh -File tools/pack.ps1 -BuildDir build/ci -OutDir dist/ci
+
+      - name: Write checksum and release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-ChildItem dist/ci -Filter *.wsplugin | Select-Object -First 1
+          if (-not $package) { throw 'pack.ps1 produced no .wsplugin' }
+          $digest = (Get-FileHash $package.FullName -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$($package.FullName).sha256", "$digest  $($package.Name)`n")
+          $version = (Get-Content package/plugin.json -Raw -Encoding utf8 | ConvertFrom-Json).version
+          $lines = Get-Content CHANGELOG.md -Encoding utf8
+          $start = ($lines | Select-String -Pattern "^## \[$version\]").LineNumber
+          if (-not $start) { throw "CHANGELOG.md lost its [$version] section" }
+          $rest = $lines[$start..($lines.Count - 1)]
+          $end = 0
+          for ($i = 1; $i -lt $rest.Count; $i++) {
+            if ($rest[$i] -match '^## \[') { $end = $i; break }
+          }
+          $section = if ($end -gt 0) { $rest[0..($end - 1)] } else { $rest }
+          [IO.File]::WriteAllText("$PWD/dist/ci/release-notes.md", (($section -join "`n").Trim() + "`n"), (New-Object Text.UTF8Encoding($false)))
+          Get-Content dist/ci/release-notes.md -Encoding utf8 | Select-Object -First 5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-package
+          path: dist/ci/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-package
+          path: dist/ci
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to overwrite." >&2
+            exit 1
+          fi
+          gh release create "$tag" --verify-tag --title "$tag" \
+            --notes-file dist/ci/release-notes.md \
+            dist/ci/*.wsplugin dist/ci/*.wsplugin.sha256

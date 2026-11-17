@@ -37,6 +37,10 @@ bool PreviewPlan::HasBlockingError() const
 {
     for (const PlanItem& item : items)
     {
+        // An unchecked row is not part of the batch, so its conflict cannot
+        // block the rows that are.
+        if (!item.selected)
+            continue;
         switch (item.status)
         {
         case Status::ErrorInvalidCharacter:

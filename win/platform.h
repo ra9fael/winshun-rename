@@ -62,6 +62,7 @@ rename_core::TemplateContext BuildTemplateContext(const CollectedItem& item,
 struct ExecuteItem {
     std::wstring fullPath;       // original full path
     std::wstring targetLeaf;     // new leaf name
+    bool deleteItem = false;     // true = recycle, targetLeaf is ignored
     bool isFolder = false;
     unsigned depth = 0;
 };

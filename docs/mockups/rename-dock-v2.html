@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>批量重命名 · Dock v2 交互稿</title>
+<style>
+:root{color-scheme:light;--canvas:#e8ebef;--window:#f8f9fb;--panel:#fff;--panel2:#f2f4f7;--line:#d7dce3;--text:#20252d;--muted:#707987;--accent:#1769c2;--accent2:#e8f2ff;--danger:#bd3b32;--dangerBg:#fff0ee;--ok:#198653;--shadow:0 18px 45px #26384b20}
+:root.dark{color-scheme:dark;--canvas:#101419;--window:#1c2229;--panel:#232a32;--panel2:#1a2026;--line:#39434f;--text:#edf1f5;--muted:#a4afbb;--accent:#62a8f4;--accent2:#1e3d60;--danger:#f28b83;--dangerBg:#512824;--ok:#65c996;--shadow:0 18px 45px #0008}
+*{box-sizing:border-box}body{margin:0;min-width:900px;background:var(--canvas);color:var(--text);font:13px/1.45 "Segoe UI",system-ui,sans-serif}.stage{padding:22px}.window{width:min(1180px,calc(100vw - 44px));height:720px;margin:auto;background:var(--window);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);overflow:hidden;display:grid;grid-template-rows:42px 43px 1fr 34px}.titlebar{display:flex;align-items:center;padding:0 15px;border-bottom:1px solid var(--line);background:var(--panel);gap:18px}.brand{font-weight:700;font-size:15px}.top-tabs{display:flex;gap:4px;margin-left:auto}.top-tabs button,.iconbtn,.crumb,.filter,.primary,.ghost,.dock-tab{border:0;background:transparent;color:var(--text);font:inherit;cursor:pointer}.top-tabs button{padding:6px 11px;border-radius:5px}.top-tabs button.active{background:var(--accent);color:#fff;font-weight:600}.iconbtn{padding:5px 8px;color:var(--muted)}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.pathbar{display:flex;align-items:center;gap:7px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel2);min-width:0}.crumbs{display:flex;align-items:center;gap:3px;min-width:0;overflow:hidden;white-space:nowrap}.crumb{padding:4px 5px;border-radius:4px;white-space:nowrap}.crumb:hover{background:var(--accent2);color:var(--accent)}.slash{color:var(--muted)}.path-spacer{flex:1}.path-edit{display:none;flex:1;min-width:120px;border:1px solid var(--accent);border-radius:4px;padding:5px 8px;background:var(--panel);color:var(--text)}.pathbar.editing .crumbs{display:none}.pathbar.editing .path-edit{display:block}.body{display:grid;grid-template-columns:390px minmax(0,1fr);min-height:0}.left-dock,.right-dock{min-width:0;min-height:0;background:var(--panel)}.left-dock{border-right:1px solid var(--line);display:flex;flex-direction:column}.right-dock{display:flex;flex-direction:column}.dock-head{height:37px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel2);cursor:grab;user-select:none}.dock-head:active{cursor:grabbing}.dock-title{font-weight:600}.dock-actions{margin-left:auto;display:flex;gap:3px}.dock-actions button{border:0;background:transparent;color:var(--muted);padding:3px 6px;cursor:pointer}.dock-actions button:hover{color:var(--text);background:var(--accent2);border-radius:4px}.dock-tabs{display:flex;gap:3px;padding:7px 10px 0;background:var(--panel2);border-bottom:1px solid var(--line)}.dock-tab{padding:7px 12px;border-radius:5px 5px 0 0;color:var(--muted)}.dock-tab.active{color:var(--text);background:var(--panel);font-weight:600}.dock-content{flex:1;min-height:0;overflow:auto}.pane{display:none;padding:14px 16px}.pane.active{display:block}.preset-row,.rule-actions{display:flex;gap:7px}.select,input{width:100%;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);padding:7px 9px;font:inherit}.smallbtn,.primary,.ghost{border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);padding:6px 11px;cursor:pointer;white-space:nowrap}.smallbtn:hover,.ghost:hover{background:var(--accent2)}.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}.rule-list{margin:13px 0 9px;border:1px solid var(--line);border-radius:5px;overflow:hidden}.rule{display:flex;align-items:center;gap:8px;padding:9px 10px;border-bottom:1px solid var(--line)}.rule:last-child{border:0}.rule.selected{background:var(--accent2);color:var(--accent)}.rule input{width:auto}.field{margin-top:12px}.field label{display:block;color:var(--muted);margin-bottom:5px}.check{display:flex;gap:7px;align-items:center;margin-top:11px}.check input{width:auto}.vim-editor{height:100%;display:flex;flex-direction:column;gap:9px}.vim-toolbar{display:flex;align-items:center;justify-content:space-between}.vim-hint{color:var(--muted);font-size:12px}.editor{flex:1;min-height:300px;border:1px solid var(--line);border-radius:6px;background:#111820;color:#dbe8f5;padding:13px;font:13px/1.8 Consolas,"Cascadia Mono",monospace;overflow:auto}.line{display:block;padding:0 7px;border-radius:3px;cursor:text}.line.current{background:#214d76;color:#fff}.line.deleted{background:#5a292b;color:#ffc0ba;text-decoration:line-through}.anchor{color:#8ca6bd}.vim-status{display:flex;gap:8px;align-items:center;color:var(--muted)}.badge{padding:4px 9px;border-radius:5px;color:#fff;font-weight:700;background:var(--accent)}.badge.insert{background:var(--ok)}.badge.replace{background:#b46d21}.badge.visual{background:#7851ae}.file-head{padding:12px 14px 8px;display:flex;align-items:center;gap:10px}.file-head h2{font-size:15px;margin:0}.file-head .count{color:var(--muted)}.filter{margin-left:auto;border:1px solid var(--line);border-radius:5px;padding:6px 9px;background:var(--panel);min-width:130px;text-align:left}.filter-menu{position:absolute;right:14px;top:44px;width:245px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:6px;display:none;z-index:4}.filter-menu.open{display:block}.filter-option{padding:8px;border-radius:4px;cursor:pointer}.filter-option:hover{background:var(--accent2)}.filter-option b{display:block}.filter-option small{display:block;color:var(--muted)}.table{margin:0 14px;border:1px solid var(--line);border-radius:6px;overflow:hidden}.thead,.tr{display:grid;grid-template-columns:38px minmax(130px,1fr) minmax(130px,1fr) 100px;align-items:center}.thead{height:35px;background:var(--panel2);color:var(--muted);font-size:12px}.tr{min-height:45px;border-top:1px solid var(--line);cursor:pointer}.tr:hover{background:var(--accent2)}.tr.current{background:#e7f0fb}:root.dark .tr.current{background:#24425d}.tr.pending{background:var(--dangerBg);color:var(--danger);text-decoration:line-through}.cell{padding:0 9px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cell:first-child{text-align:center}.state{font-size:12px;text-decoration:none;color:var(--muted)}.pending .state{color:var(--danger);font-weight:600}.empty{flex:1;display:grid;place-items:center;text-align:center;color:var(--muted);padding:40px}.help{border-top:1px solid var(--line);background:var(--panel2);max-height:0;overflow:hidden;transition:max-height .2s ease}.help.open{max-height:190px}.help-inner{padding:13px 18px;display:grid;grid-template-columns:1fr 1fr;gap:16px}.help h3{margin:0 0 5px;font-size:13px}.help p{margin:0;color:var(--muted)}.footer{display:flex;align-items:center;gap:10px;padding:0 14px;border-top:1px solid var(--line);background:var(--panel2);color:var(--muted)}.footer .summary{color:var(--text)}.footer .hint{margin-left:auto}.float-card{position:fixed;width:320px;display:none;background:var(--panel);border:1px solid var(--accent);border-radius:7px;box-shadow:var(--shadow);z-index:20}.float-card.show{display:block}.float-card .dock-head{border-radius:7px 7px 0 0}.float-card .float-body{padding:15px;color:var(--muted)}.toast{position:fixed;bottom:47px;left:50%;transform:translateX(-50%);background:#26313d;color:#fff;padding:8px 13px;border-radius:5px;opacity:0;pointer-events:none;transition:opacity .15s}.toast.show{opacity:1}@media(max-width:980px){.window{height:calc(100vh - 44px)}.body{grid-template-columns:330px minmax(0,1fr)}}
+</style>
+<style>
+/* Review revision: make the two data surfaces use the available dock area. */
+.text-pane.active{display:flex;flex-direction:column;height:100%;padding:0;overflow:hidden}
+.text-pane .vim-editor{display:flex;flex:1;min-height:0;height:auto}
+.text-pane .editor{flex:1;min-height:0;height:auto;overflow:auto}
+.right-dock>.file-head{flex:0 0 auto}
+.right-dock>.table{flex:1;min-height:0;overflow:auto}
+.right-dock>.empty{display:none}
+.file-head .primary{margin-left:auto}
+.file-head .filter{margin-left:0}
+.footer .summary{gap:7px}
+.footer .metric{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font-size:12px;white-space:nowrap}
+.footer .metric i{width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block}
+.footer .metric.ready i{background:var(--ok)}
+.footer .metric.delete i{background:var(--danger)}
+</style>
+<style>
+/* WinShun theme surface: the text editor follows the surrounding Mica-like panel. */
+:root{--editor:#fff;--editorText:#20252d;--editorAnchor:#7a8795;--editorCurrent:#e8f2ff}
+:root.dark{--editor:#232a32;--editorText:#edf1f5;--editorAnchor:#a4afbb;--editorCurrent:#1e3d60}
+.editor{background:var(--editor);color:var(--editorText)}
+.line.current{background:var(--editorCurrent);color:var(--editorText)}
+.line.deleted{background:var(--dangerBg);color:var(--danger)}
+.anchor{color:var(--editorAnchor)}
+</style>
+</head>
+<body>
+<div class="stage"><main class="window" id="window">
+<header class="titlebar"><div class="brand">批量重命名</div><div class="top-tabs"><button class="active" data-top="rules">规则</button><button data-top="text">文本</button><button id="helpBtn">帮助</button><button class="iconbtn" id="themeBtn">◐</button></div></header>
+<div class="pathbar" id="pathbar"><div class="crumbs"><button class="crumb">此电脑</button><span class="slash">›</span><button class="crumb">D:</button><span class="slash">›</span><button class="crumb">项目</button><span class="slash">›</span><button class="crumb">素材</button><span class="slash">›</span><button class="crumb">2026-11</button></div><input class="path-edit" value="D:\\项目\\素材\\2026-11"><span class="path-spacer"></span><button class="ghost" id="editPath">编辑路径</button><button class="ghost">上一级</button><button class="ghost">刷新</button></div>
+<section class="body">
+<aside class="left-dock" id="leftDock"><div class="dock-head" draggable="true" data-dock="left"><span class="dock-title">编辑区</span><span class="dock-actions"><button title="浮动" data-float="left">□</button><button>×</button></span></div><nav class="dock-tabs"><button class="dock-tab active" data-pane="rules">规则</button><button class="dock-tab" data-pane="text">文本 / Vim</button></nav><div class="dock-content"><div class="pane active" id="rulesPane"><div class="preset-row"><select class="select"><option>预设…</option><option>清理照片名称</option></select><button class="smallbtn">存</button><button class="smallbtn">删</button></div><div class="rule-list"><div class="rule selected"><input type="checkbox" checked><span>文本 · 名称 ·（空的）</span><span style="margin-left:auto;color:var(--muted)">⋮</span></div><div class="rule"><input type="checkbox" checked><span>编号 · 名称 · 001</span><span style="margin-left:auto;color:var(--muted)">⋮</span></div></div><div class="rule-actions"><button class="smallbtn">添加</button><button class="smallbtn">复制</button><button class="smallbtn">上移</button><button class="smallbtn">下移</button><button class="smallbtn">删除</button></div><div class="field"><label>查找</label><input placeholder="要替换的文字"></div><div class="field"><label>替换为</label><input placeholder="新的文字"></div><label class="check"><input type="checkbox"> 使用正则表达式</label><label class="check"><input type="checkbox" checked> 替换全部匹配</label><label class="check"><input type="checkbox"> 区分大小写</label><div class="field"><label>应用于</label><select class="select"><option>文件名</option><option>扩展名</option><option>完整名称</option></select></div></div><div class="pane" id="textPane"><div class="vim-editor"><div class="vim-toolbar"><button class="primary" id="vimToggle">Vim <span>已开启</span></button><span class="vim-hint">点击空白处也会定位到真实行</span></div><div class="editor" id="editor"><span class="line current" data-line="0"><span class="anchor">/1 </span>IMG_001.jpg</span><span class="line" data-line="1"><span class="anchor">/2 </span>IMG_002.jpg</span><span class="line" data-line="2"><span class="anchor">/3 </span>IMG_003.jpg</span><span class="line deleted" data-line="3"><span class="anchor">/4 </span>IMG_004.jpg</span></div><div class="vim-status"><span class="badge" id="badge">-- NORMAL --</span><span>j/k 行　h/l 字符　dd 待删除　u 恢复</span></div></div></div></div></aside>
+<section class="right-dock" id="rightDock"><div class="dock-head" draggable="true" data-dock="files"><span class="dock-title">文件列表</span><span class="dock-actions"><button title="浮动" data-float="files">□</button><button>×</button></span></div><div class="file-head"><h2>文件列表</h2><span class="count">4 个条目 · 3 项会改</span><div style="position:relative"><button class="filter" id="filterBtn">全部　⌄</button><div class="filter-menu" id="filterMenu"><div class="filter-option" data-filter="全部"><b>全部</b><small>所有条目，包括不变和有问题</small></div><div class="filter-option" data-filter="已选"><b>已选</b><small>当前勾选的条目</small></div><div class="filter-option" data-filter="可改"><b>可改</b><small>无错误且目标名称不同</small></div><div class="filter-option" data-filter="要改"><b>要改</b><small>已选且可以执行重命名</small></div></div></div></div><div class="table"><div class="thead"><div class="cell">✓</div><div class="cell">原始名称</div><div class="cell">重命名后</div><div class="cell">状态</div></div><div class="tr current"><div class="cell"><input type="checkbox" checked></div><div class="cell">IMG_001.jpg</div><div class="cell">trip-001.jpg</div><div class="cell state">可改</div></div><div class="tr"><div class="cell"><input type="checkbox" checked></div><div class="cell">IMG_002.jpg</div><div class="cell">trip-002.jpg</div><div class="cell state">可改</div></div><div class="tr"><div class="cell"><input type="checkbox" checked></div><div class="cell">IMG_003.jpg</div><div class="cell">trip-003.jpg</div><div class="cell state">可改</div></div><div class="tr pending"><div class="cell"><input type="checkbox"></div><div class="cell">IMG_004.jpg</div><div class="cell">—</div><div class="cell state">待删除</div></div></div><div class="empty"><div><strong>预览与执行分开</strong><br><span>先检查目标名称，再点击“重命名”。待删除项会保留在列表中。</span></div></div><div style="padding:0 14px 12px;text-align:right"><button class="primary">重命名 3 项</button></div></section>
+</section>
+<section class="help" id="help"><div class="help-inner"><div><h3>筛选只改变显示</h3><p>它不会改变实际执行集合。<br>全部显示所有条目；已选显示勾选项；可改显示无错误且目标不同的项；要改显示已选且可执行的项。</p></div><div><h3>文本 / Vim</h3><p>j/k 移动行，h/l 移动字符，dd 标记待删除，u 恢复。待删除项会以淡红背景、删除线和状态列提示。</p></div></div></section>
+<footer class="footer"><span class="badge" id="footerBadge">-- NORMAL --</span><span class="summary">4 项 · 3 项会改 · 1 项待删除</span><span class="hint">Enter 执行　? 查看帮助</span></footer>
+</main></div><div class="float-card" id="floatCard"><div class="dock-head"><span class="dock-title" id="floatTitle">浮动面板</span><span class="dock-actions"><button id="dockBack">停靠回左侧</button></span></div><div class="float-body">这是浮动状态示意。点击“停靠回左侧”恢复默认布局。</div></div><div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+function toast(text){const node=$('#toast');node.textContent=text;node.classList.add('show');setTimeout(()=>node.classList.remove('show'),1200)}
+$$('[data-pane]').forEach(button=>button.onclick=()=>{const pane=button.dataset.pane;$$('[data-pane]').forEach(item=>item.classList.toggle('active',item===button));$$('.pane').forEach(item=>item.classList.toggle('active',item.id===pane+'Pane'));$$('[data-top]').forEach(item=>item.classList.toggle('active',item.dataset.top===pane))});
+$$('[data-top]').forEach(button=>button.onclick=()=>$$('[data-pane]').find(item=>item.dataset.pane===button.dataset.top)?.click());
+$('#helpBtn').onclick=()=>$('#help').classList.toggle('open');
+$('#themeBtn').onclick=()=>document.documentElement.classList.toggle('dark');
+$('#editPath').onclick=()=>{$('#pathbar').classList.add('editing');$('.path-edit').focus();$('.path-edit').select()};
+$('.path-edit').onkeydown=event=>{if(event.key==='Enter'){$('#pathbar').classList.remove('editing');toast('路径已更新')}};
+$('#filterBtn').onclick=()=>$('#filterMenu').classList.toggle('open');
+$$('.filter-option').forEach(option=>option.onclick=()=>{$('#filterBtn').textContent=option.dataset.filter+'　⌄';$('#filterMenu').classList.remove('open');toast('当前筛选：'+option.dataset.filter)});
+document.addEventListener('click',event=>{if(!event.target.closest('#filterBtn')&&!event.target.closest('#filterMenu'))$('#filterMenu').classList.remove('open')});
+const lines=$$('.line'),badge=$('#badge'),footerBadge=$('#footerBadge');
+function setMode(mode){badge.textContent=mode;footerBadge.textContent=mode;const cls=mode.includes('INSERT')?'insert':mode.includes('REPLACE')?'replace':mode.includes('VISUAL')?'visual':'';badge.className='badge '+cls;footerBadge.className='badge '+cls}
+lines.forEach(line=>line.onclick=()=>{lines.forEach(item=>item.classList.remove('current'));line.classList.add('current');toast('Vim 光标：第 '+(+line.dataset.line+1)+' 行')});
+$('#editor').onclick=event=>{if(event.target===event.currentTarget){lines.forEach(item=>item.classList.remove('current'));lines[1].classList.add('current');toast('空白区域定位到第 2 行')}};
+$('#vimToggle').onclick=()=>{const insert=!badge.textContent.includes('INSERT');setMode(insert?'-- INSERT --':'-- NORMAL --');$('#vimToggle span').textContent=insert?'编辑中':'已开启'};
+document.addEventListener('keydown',event=>{if(event.target.tagName==='INPUT'||event.target.tagName==='SELECT')return;let index=lines.findIndex(item=>item.classList.contains('current'));if(event.key==='j')index=Math.min(lines.length-1,index+1);if(event.key==='k')index=Math.max(0,index-1);if(event.key==='h'||event.key==='l'){toast('字符光标 '+event.key);return}if(event.key==='i')setMode('-- INSERT --');if(event.key==='Escape')setMode('-- NORMAL --');if(event.key==='d'){const line=lines[index];line.classList.toggle('deleted');line.classList.toggle('pending');toast(line.classList.contains('deleted')?'已标记待删除':'已恢复')}if(event.key==='u'){lines[index].classList.remove('deleted','pending');toast('已恢复当前行')}lines.forEach(item=>item.classList.remove('current'));lines[index].classList.add('current')});
+$$('[data-float]').forEach(button=>button.onclick=()=>{const card=$('#floatCard');card.classList.add('show');$('#floatTitle').textContent=button.dataset.float==='files'?'文件列表':'编辑区';card.style.left=(button.dataset.float==='files'?innerWidth-350:30)+'px';card.style.top='110px';toast('已模拟浮动面板')});
+$('#dockBack').onclick=()=>{$('#floatCard').classList.remove('show');toast('已恢复默认停靠布局')};
+let drag=null;$$('.dock-head[draggable]').forEach(head=>{head.ondragstart=()=>drag=head.dataset.dock;head.ondragend=()=>drag=null});$('#leftDock').ondragover=event=>event.preventDefault();$('#leftDock').ondrop=()=>toast(drag==='files'?'文件列表已模拟 tabify 到左侧':'编辑区已保持左侧 tabify');
+</script>
+<script>
+// Revision 2: Vim belongs to Text and is controlled from the global toolbar.
+const editTabs=document.querySelector('.dock-tabs');
+const textTab=[...document.querySelectorAll('[data-pane]')].find(x=>x.dataset.pane==='text');
+if(textTab) textTab.textContent='文本';
+const oldVim=document.querySelector('#vimToggle');
+const globalVim=document.createElement('button');
+globalVim.id='globalVimToggle';
+globalVim.className='primary';
+globalVim.innerHTML='Vim <span>关</span>';
+document.querySelector('.top-tabs').insertBefore(globalVim,document.querySelector('#themeBtn'));
+if(oldVim) oldVim.closest('.vim-toolbar')?.remove();
+document.querySelector('.vim-status')?.remove();
+const textPane=document.querySelector('#textPane');
+textPane?.classList.add('text-pane');
+globalVim.onclick=()=>{
+  const on=globalVim.dataset.on!=='1';
+  globalVim.dataset.on=on?'1':'0';
+  globalVim.innerHTML='Vim <span>'+ (on?'开':'关') +'</span>';
+  setMode(on?'NORMAL':'OFF');
+  toast(on?'Vim 已开启':'Vim 已关闭');
+};
+const oldSummary=document.querySelector('.footer .summary');
+if(oldSummary) oldSummary.innerHTML='<span class="metric ready"><i></i>3 项可改</span><span class="metric"><i></i>0 个冲突</span><span class="metric delete"><i></i>1 项待删除</span>';
+const oldFooterBadge=document.querySelector('#footerBadge');
+if(oldFooterBadge){oldFooterBadge.textContent='就绪';oldFooterBadge.title='当前没有 Vim 操作状态';}
+function setMode(mode){
+  const footer=document.querySelector('#footerBadge');
+  if(!footer)return;
+  footer.textContent=mode==='OFF'?'就绪':mode;
+  footer.className='badge '+(mode==='NORMAL'?'':'insert');
+}
+const renameButton=[...document.querySelectorAll('.right-dock .primary')].find(button=>button.textContent.includes('重命名'));
+const fileHead=document.querySelector('.right-dock .file-head');
+if(renameButton&&fileHead){
+  const buttonWrap=renameButton.parentElement;
+  renameButton.textContent='重命名';
+  fileHead.append(renameButton);
+  buttonWrap.remove();
+}
+</script>
+</body></html>

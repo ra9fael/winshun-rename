@@ -2,6 +2,7 @@
 build/
 build-msvc/
 build-qt/
+build-vimcore/
 dist/
 CMakeFiles/
 *.obj

@@ -1,0 +1,7 @@
+{"id":1,"jsonrpc":"2.0","result":{"name":"ra9fael.rename","protocolVersion":"1"}}
+{"id":2,"jsonrpc":"2.0","result":{"items":[{"copy":"rename ","icon":"glyph:U+E8AC","id":"rename.one","subtitle":"只改一个文件时用；改名结果就在这一行，Enter 执行","title":"改名：rename 原名 -> 新名"},{"data":{"openWindow":true},"icon":"glyph:U+E8B7","id":"rename.window","subtitle":"打开重命名窗口：规则链、文本模式、批量预览，都在窗口里","title":"在文件夹里重命名…"}]}}
+{"id":1,"jsonrpc":"2.0","method":"winshun/tool","params":{"arguments":{"kind":"files","limit":5,"query":"report"},"name":"search_files"}}
+{"id":3,"jsonrpc":"2.0","result":{"items":[{"data":{"batch":[{"folder":false,"path":"C:\\Users\\renfei\\AppData\\Local\\Temp\\kw2-2f64eaa6\\report_2025.docx","target":"����_2025.docx"}],"folder":false,"leaf":"report_2025.docx","path":"C:\\Users\\renfei\\AppData\\Local\\Temp\\kw2-2f64eaa6\\report_2025.docx","status":"ready","target":"����_2025.docx"},"icon":"glyph:U+E8A5","id":"rename.row.1","subtitle":"← report_2025.docx","title":"����_2025.docx"}]}}
+{"id":2,"jsonrpc":"2.0","method":"winshun/tool","params":{"arguments":{"kind":"files","limit":5,"query":"report"},"name":"search_files"}}
+{"id":4,"jsonrpc":"2.0","result":{"items":[{"icon":"glyph:U+E8AC","id":"rename.need-replace","subtitle":"写成 rename report -> 新名字","title":"还需要新名字","valid":false}]}}
+

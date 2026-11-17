@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace rename_ui {
@@ -40,10 +41,13 @@ struct Row {
     std::wstring originalLeaf;
     std::wstring targetLeaf;
     rename_core::Status status = rename_core::Status::Init;
+    rename_core::Action action = rename_core::Action::Rename;
     bool selected = true;
     bool isFolder = false;
     unsigned depth = 0;
-    bool skipped = false;       // absent from the text buffer: leave untouched
+    // The item's line is gone from the buffer, or the list marked it: the batch
+    // will delete it (to the Recycle Bin) rather than rename it.
+    bool pendingDelete = false;
     std::wstring note;          // "trailing whitespace removed", "no extension; ..."
 };
 
@@ -51,7 +55,7 @@ struct Counts {
     int ready = 0;
     int unchanged = 0;
     int errors = 0;
-    int skipped = 0;
+    int toDelete = 0;
 };
 
 // A filter is a visibility rule, never an input-set change (RN-FR-10).
@@ -67,6 +71,12 @@ struct ControlState {
 // and asked for plans; execution is the caller's job (rename_win::Execute).
 class Presenter {
 public:
+    struct PendingDeleteState
+    {
+        std::wstring targetLeaf;
+        bool selected = true;
+    };
+
     void SetMode(Mode mode);
     Mode CurrentMode() const { return m_mode; }
 
@@ -76,6 +86,9 @@ public:
 
     // The full input set, replaced whenever the selection changes.
     void SetItems(std::vector<rename_core::ItemSnapshot> items);
+    // Folder navigation creates a new input set whose short numeric ids may be
+    // reused. Do not carry checkbox state from the old folder by coincidence.
+    void ReplaceItems(std::vector<rename_core::ItemSnapshot> items);
     const std::vector<rename_core::ItemSnapshot>& Items() const { return m_items; }
 
     // Logical (OLE) clipboard representation, used by the tests to prove that
@@ -98,6 +111,13 @@ public:
 
     // Selection and filtering.
     void SetRowSelected(const std::string& id, bool selected);
+    bool RestorePendingDelete(const std::string& id);
+    // Undo one row's buffer edit: its name goes back to the on-disk name and its
+    // "d" mark is cleared. Cheaper and more predictable than vim's own undo, which
+    // any model-level rewrite of the buffer invalidates.
+    bool RevertRow(const std::string& id);
+    // Undo every name/delete edit in the buffer, keeping the selection.
+    bool RevertAllEdits();
     void SelectAllVisible(bool selected);
     void SetFilter(Filter filter);
     Filter CurrentFilter() const { return m_filter; }
@@ -122,7 +142,8 @@ public:
 
     // After a successful batch the buffer is rebuilt with fresh ids so a second
     // edit cannot point at the pre-rename names (design §3.8).
-    void ApplyExecutedResults(const std::vector<std::pair<std::string, std::wstring>>& applied);
+    void ApplyExecutedResults(const std::vector<std::pair<std::string, std::wstring>>& renamed,
+                              const std::vector<std::string>& deleted);
 
 private:
     void RefreshRows();
@@ -136,11 +157,13 @@ private:
     rename_core::PreviewPlan m_plan;
     Filter m_filter = Filter::All;
     std::vector<Row> m_rows;
+    std::unordered_map<std::string, PendingDeleteState> m_pendingDeleteStates;
     std::uint64_t m_generation = 0;
 };
 
 // Build the buffer text from an id table. Shared by the presenter and the tests
 // so the two cannot drift on formatting.
-std::wstring FormatOilBuffer(const std::vector<rename_core::OilEntry>& table);
+std::wstring FormatOilBuffer(const std::vector<rename_core::OilEntry>& table,
+                             const std::vector<rename_core::PlanItem>* plan = nullptr);
 
 } // namespace rename_ui

@@ -1,0 +1,4 @@
+{"id":1,"jsonrpc":"2.0","result":{"name":"ra9fael.rename","protocolVersion":"1"}}
+{"id":2,"jsonrpc":"2.0","result":{"items":[{"copy":"rename ","icon":"glyph:U+E8AC","id":"rename.one","subtitle":"只改一个文件时用；改名结果就在这一行，Enter 执行","title":"改名：rename 原名 -> 新名"},{"data":{"openFolder":"C:\\Users\\renfei\\AppData\\Local\\Temp\\fold-50985faf"},"icon":"glyph:U+E8B7","id":"rename.here","score":100,"subtitle":"打开重命名窗口，列出这个文件夹里的项目C:\\Users\\renfei\\AppData\\Local\\Temp\\fold-50985faf","title":"在此目录重命名…"}]}}
+{"id":3,"jsonrpc":"2.0","result":{"effects":[{"type":"hide"}]}}
+

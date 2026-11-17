@@ -116,6 +116,36 @@ std::wstring JoinPath(const std::wstring& directory, const std::wstring& leaf)
     return directory + L"\\" + leaf;
 }
 
+// The file APIs accept extended and slash-mixed variants, while the Shell
+// parser expects a conventional absolute Win32 path. Normalize a separate
+// binding path without changing the path used by identity/file operations.
+std::wstring ShellParsingPath(const std::wstring& input)
+{
+    std::wstring path = input;
+    std::replace(path.begin(), path.end(), L'/', L'\\');
+    if (path.rfind(L"\\\\?\\UNC\\", 0) == 0)
+        path = L"\\\\" + path.substr(8);
+    else if (path.rfind(L"\\\\?\\", 0) == 0)
+        path.erase(0, 4);
+
+    const DWORD size = ::GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
+    if (size == 0)
+        return path;
+    std::wstring absolute(size, L'\0');
+    const DWORD written = ::GetFullPathNameW(path.c_str(), size, absolute.data(), nullptr);
+    if (written == 0 || written >= size)
+        return path;
+    absolute.resize(written);
+    return absolute;
+}
+
+std::wstring ShellBindFailure(HRESULT hr, const std::wstring& path)
+{
+    wchar_t code[16]{};
+    std::swprintf(code, std::size(code), L"0x%08lX", static_cast<unsigned long>(hr));
+    return L"Shell 无法解析该路径（" + std::wstring(code) + L"）：" + path;
+}
+
 bool TargetFree(const std::wstring& target)
 {
     const DWORD attributes = ::GetFileAttributesW(target.c_str());
@@ -188,10 +218,15 @@ std::wstring WriteJournal(const std::vector<ExecuteResultItem>& items, const std
 // earlier round has already landed — that ordering is what makes
 // "A → B, B → C" work without a temporary name.
 std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>& accepted,
-                                                  std::vector<ExecuteResultItem>& rejected,
-                                                  bool& undoAvailable)
+                                                   std::vector<ExecuteResultItem>& rejected,
+                                                   bool& undoAvailable)
 {
     std::vector<ExecuteResultItem> renamed;
+    // IFileOperation is a Shell COM object. The UI normally runs in an STA, but
+    // protocol-driven use and tests need the same guarantee locally; without it
+    // CoCreateInstance can fail every item with no useful UI clue.
+    const HRESULT comInit = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool uninitialize = SUCCEEDED(comInit);
 
     // The Shell owns rename, elevation and undo. FOFX_SHOWELEVATIONPROMPT lets it
     // ask for rights rather than failing with a bare access-denied, and
@@ -202,9 +237,14 @@ std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>
     // documented values are spelled out here
     // (IFileOperation::SetOperationFlags, shellapi.h / shobjidl_core.h).
     constexpr DWORD kFofAllowUndo = 0x0040;
-    constexpr DWORD kFofxAddUndoRecord = 0x2000000;
-    constexpr DWORD kFofxShowElevationPrompt = 0x400000;
-    const DWORD operationFlags = kFofAllowUndo | kFofxAddUndoRecord | kFofxShowElevationPrompt;
+    // Values verified against the Windows SDK's ShObjIdl_core.h. The old
+    // hand-written values were off by one hexadecimal digit, so SetOperationFlags
+    // failed and every requested rename reported "not done".
+    constexpr DWORD kFofxShowElevationPrompt = 0x00040000;
+    constexpr DWORD kFofxRecycleOnDelete = 0x00080000;
+    constexpr DWORD kFofxAddUndoRecord = 0x20000000;
+    const DWORD operationFlags = kFofAllowUndo | kFofxAddUndoRecord
+                               | kFofxShowElevationPrompt | kFofxRecycleOnDelete;
 
     ComPtr<IFileOperation> fileOperation;
     HRESULT hr = ::CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
@@ -218,11 +258,14 @@ std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>
         {
             ExecuteResultItem report;
             report.originalPath = item.fullPath;
-            report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
+            report.targetPath = item.deleteItem ? std::wstring()
+                                                : JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
             report.outcome = ExecuteOutcome::Failed;
             report.detail = L"无法创建 Shell 改名操作";
             rejected.push_back(std::move(report));
         }
+        if (uninitialize)
+            ::CoUninitialize();
         return renamed;
     }
 
@@ -238,28 +281,35 @@ std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>
         beforeByAccepted[i] = ReadIdentity(accepted[i].fullPath);
 
         ComPtr<IShellItem> shellItem;
-        if (FAILED(::SHCreateItemFromParsingName(accepted[i].fullPath.c_str(), nullptr,
-                                                 IID_PPV_ARGS(&shellItem))))
+        const std::wstring shellPath = ShellParsingPath(accepted[i].fullPath);
+        const HRESULT bindHr = ::SHCreateItemFromParsingName(shellPath.c_str(), nullptr,
+                                                             IID_PPV_ARGS(&shellItem));
+        if (FAILED(bindHr))
         {
             ExecuteResultItem report;
             report.originalPath = accepted[i].fullPath;
-            report.targetPath = JoinPath(DirectoryOf(accepted[i].fullPath),
-                                         accepted[i].targetLeaf);
+            report.targetPath = accepted[i].deleteItem ? std::wstring()
+                                                       : JoinPath(DirectoryOf(accepted[i].fullPath),
+                                                                  accepted[i].targetLeaf);
             report.outcome = ExecuteOutcome::Failed;
-            report.detail = L"Shell 无法解析该路径";
+            report.detail = ShellBindFailure(bindHr, shellPath);
             rejected.push_back(std::move(report));
             continue;
         }
 
-        if (FAILED(fileOperation->RenameItem(shellItem.Get(), accepted[i].targetLeaf.c_str(),
-                                            nullptr)))
+        const HRESULT queueHr = accepted[i].deleteItem
+            ? fileOperation->DeleteItem(shellItem.Get(), nullptr)
+            : fileOperation->RenameItem(shellItem.Get(), accepted[i].targetLeaf.c_str(), nullptr);
+        if (FAILED(queueHr))
         {
             ExecuteResultItem report;
             report.originalPath = accepted[i].fullPath;
-            report.targetPath = JoinPath(DirectoryOf(accepted[i].fullPath),
-                                         accepted[i].targetLeaf);
+            report.targetPath = accepted[i].deleteItem ? std::wstring()
+                                                       : JoinPath(DirectoryOf(accepted[i].fullPath),
+                                                                  accepted[i].targetLeaf);
             report.outcome = ExecuteOutcome::Failed;
-            report.detail = L"Shell 拒绝了改名请求";
+            report.detail = accepted[i].deleteItem ? L"Shell 拒绝了删除请求"
+                                                  : L"Shell 拒绝了改名请求";
             rejected.push_back(std::move(report));
             continue;
         }
@@ -270,7 +320,11 @@ std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>
     }
 
     if (shellItems.empty())
+    {
+        if (uninitialize)
+            ::CoUninitialize();
         return renamed;
+    }
 
     hr = fileOperation->PerformOperations();
 
@@ -283,7 +337,8 @@ std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>
 
         ExecuteResultItem report;
         report.originalPath = item.fullPath;
-        report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
+        report.targetPath = item.deleteItem ? std::wstring()
+                                            : JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
 
         if (FAILED(hr))
         {
@@ -297,18 +352,23 @@ std::vector<ExecuteResultItem> SubmitThroughShell(const std::vector<ExecuteItem>
         // submission must not be renamed on the strength of stale metadata. The
         // Shell already renamed it, so this is a warning attached to the record,
         // not a refusal.
-        const IdentitySnapshot after = ReadIdentity(report.targetPath);
-        if (beforeByAccepted[index].valid && after.valid &&
+        const IdentitySnapshot after = item.deleteItem ? IdentitySnapshot{}
+                                                       : ReadIdentity(report.targetPath);
+        if (!item.deleteItem && beforeByAccepted[index].valid && after.valid &&
             !SameIdentity(beforeByAccepted[index], after))
         {
             report.detail = L"改名成功，但文件身份与预览时不一致";
         }
 
         report.outcome = ExecuteOutcome::Renamed;
+        if (item.deleteItem)
+            report.detail = L"已移至回收站";
         renamed.push_back(std::move(report));
     }
 
     undoAvailable = undoAvailable || SUCCEEDED(hr);
+    if (uninitialize)
+        ::CoUninitialize();
     return renamed;
 }
 
@@ -355,7 +415,8 @@ ExecuteResult Execute(const std::vector<ExecuteItem>& items, const std::wstring&
         {
             ExecuteResultItem report;
             report.originalPath = item.fullPath;
-            report.targetPath = JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
+            report.targetPath = item.deleteItem ? std::wstring()
+                                                : JoinPath(DirectoryOf(item.fullPath), item.targetLeaf);
 
             const IdentitySnapshot before = ReadIdentity(item.fullPath);
             if (!before.valid)
@@ -366,7 +427,10 @@ ExecuteResult Execute(const std::vector<ExecuteItem>& items, const std::wstring&
                 continue;
             }
 
-            if (!TargetFree(report.targetPath))
+            // Delete has no target-name collision to resolve. The Shell still
+            // receives the same identity-checked source path and moves it to the
+            // Recycle Bin under FOFX_RECYCLEONDELETE.
+            if (!item.deleteItem && !TargetFree(report.targetPath))
             {
                 // The target exists. If another item still waiting names it as its
                 // own source, that item frees it by running — defer to a later

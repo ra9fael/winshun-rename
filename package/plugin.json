@@ -6,7 +6,7 @@
     "zh": "批量重命名",
     "en": "Batch Rename"
   },
-  "version": "0.4.2",
+  "version": "0.4.4",
   "minWinShun": "0.22.0",
   "description": {
     "zh": "批量重命名：选中一个文件夹或同目录的一组项目，按规则或文本方式预览并改名。单文件改名请用 Win顺 的 F2。",

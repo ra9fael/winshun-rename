@@ -14,6 +14,7 @@
 #include "win/platform.h"
 
 #include <QApplication>
+#include <QDockWidget>
 #include <QByteArray>
 #include <QFile>
 #include <QJsonDocument>
@@ -152,6 +153,11 @@ void GrabIfAsked(Ui* ui)
     {
         if (auto* table = ui->window->findChild<QTableView*>())
             table->selectRow(0);
+    }
+    if (qEnvironmentVariableIsSet("RENAME_GRAB_HELP"))
+    {
+        if (auto* help = ui->window->findChild<QDockWidget*>(QStringLiteral("renameHelpDock")))
+            help->show();
     }
 
     QTimer::singleShot(900, ui->window, [window = ui->window, grabTo] {

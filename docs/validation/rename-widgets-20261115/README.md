@@ -41,8 +41,12 @@ were present when the experiment started.
   items.
 - A directory bar has `上一级` / `选择…` / `刷新`, an editable path and
   double-click-to-enter on folder rows.
-- A missing line in the text buffer is a safe **skip** (`skipped`), not a
-  delete; unknown/duplicate ids and malformed lines still block.
+- Text mode has three explicit item states: `/1 name` is selected, `//1 name`
+  is unselected, and deleting the complete anchor line marks that item **pending
+  delete**. Deletes go through Shell `IFileOperation` to the Recycle Bin with an
+  undo record; malformed, unknown and duplicate anchors still block. Therefore
+  deleting every valid anchor deliberately queues every item for deletion; the
+  confirmation dialog states that count before any disk operation runs.
 - The plugin card/result icon is `ph:textbox` (Phosphor `textbox`, U+EB0A).
   `glyph:U+EB0A` is a **Segoe Fluent/MDL2** slot, not Phosphor, so the card
   would not change; `ph:textbox` is the name WinShun resolves in its Phosphor
@@ -94,9 +98,9 @@ same Widgets target used by the plugin.
 |---|---|
 | ![folder](folder.png) | ![missing](missing.png) |
 
-| Selected row (readable text) | Skipped line (missing from text buffer) |
+| Selected row (readable text) | Pending-delete row |
 |---|---|
-| ![selected](selected.png) | ![skip](skip.png) |
+| ![selected](selected.png) | Pending delete is shown in the live Widgets table and captured by its regression tests. |
 
 | English UI | Files trigger under the host Qt environment |
 |---|---|

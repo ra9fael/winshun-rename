@@ -6,12 +6,13 @@
 // graph.
 #pragma once
 
-#include <QWidget>
+#include <QMainWindow>
 
 class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QHBoxLayout;
 class QPlainTextEdit;
 class QListView;
 class QPushButton;
@@ -19,6 +20,7 @@ class QStackedWidget;
 class QTableView;
 class QTimer;
 class QToolButton;
+class QTabBar;
 
 namespace rename_qml {
 class Bridge;
@@ -29,7 +31,7 @@ namespace rename_widgets {
 class VimTextFilter;
 struct Theme;
 
-class Window : public QWidget
+class Window : public QMainWindow
 {
     Q_OBJECT
 
@@ -48,6 +50,7 @@ public:
 protected:
     void showEvent(QShowEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void BuildUi();
@@ -65,6 +68,7 @@ private:
     void SyncRuleFields();
     void SyncTextEditor();
     void SyncPath();
+    void ShowPathEditor(bool show);
 
     void NavigateTo(const QString& folder);
     void GoUp();
@@ -81,6 +85,16 @@ private:
     bool zh() const;
     void ApplyTitleBar();
     void RefreshVim();
+    // ":q" / ":q!" from the vim command line: close the plugin window, refusing
+    // while the buffer still has unapplied edits unless the quit is forced.
+    void OnVimQuit(bool force);
+    // Show a vim-style message ("E37: ...") in the command line under the editor
+    // until the next key changes the status.
+    void ShowVimMessage(const QString& message);
+    // Mirror the vim core state into the toolbar toggle (mode letter) and the
+    // command-line label under the text editor. Safe to call any time.
+    void RefreshVimStatus();
+    void RefreshCursorPosition();
     // Point the preview table at the row the vim cursor is on (oil-style
     // feedback: edit a line, see which item it belongs to).
     void HighlightPreviewRow(int line);
@@ -91,11 +105,11 @@ private:
 
     Theme* m_theme = nullptr;
 
-    QLabel* m_title = nullptr;
-    QToolButton* m_modeRules = nullptr;
-    QToolButton* m_modeText = nullptr;
+    QTabBar* m_editorTabs = nullptr;
 
     QLineEdit* m_path = nullptr;
+    QWidget* m_breadcrumb = nullptr;
+    QHBoxLayout* m_breadcrumbLayout = nullptr;
     QToolButton* m_up = nullptr;
     QToolButton* m_browse = nullptr;
     QToolButton* m_reload = nullptr;
@@ -125,10 +139,15 @@ private:
     QToolButton* m_caseButtons[4] = {nullptr, nullptr, nullptr, nullptr};
 
     QPlainTextEdit* m_text = nullptr;
-    // Vim mode: the chip that toggles it and the badge that shows the core's
-    // current mode. Off unless the user turned it on (persisted in settings).
+    // Vim mode is a mode of the text editor, toggled from the global title bar.
     QToolButton* m_vimToggle = nullptr;
-    QLabel* m_vimBadge = nullptr;
+    // The vim command/status line under the text editor (":w"-style feedback).
+    // Hidden entirely while vim mode is off.
+    QLabel* m_vimCommandLine = nullptr;
+    // A transient message ("E37: ...") shown instead of the core status until the
+    // user presses another key.
+    QString m_vimMessage;
+    QLabel* m_cursorPosition = nullptr;
 
     QCheckBox* m_selectAll = nullptr;
     QLabel* m_originalHeader = nullptr;
@@ -138,9 +157,10 @@ private:
     QStackedWidget* m_tableStack = nullptr;
     QLabel* m_empty = nullptr;
 
-    QLabel* m_dot = nullptr;
-    QLabel* m_status = nullptr;
     QLabel* m_hint = nullptr;
+    QLabel* m_readyBadge = nullptr;
+    QLabel* m_conflictBadge = nullptr;
+    QLabel* m_deleteBadge = nullptr;
 
     QPushButton* m_apply = nullptr;
 
@@ -149,6 +169,8 @@ private:
 
     bool m_syncing = false;
     bool m_asking = false;
+    bool m_listPendingG = false;
+    bool m_listPendingD = false;
 };
 
 } // namespace rename_widgets

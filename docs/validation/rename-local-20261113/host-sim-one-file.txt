@@ -1,0 +1,15 @@
+started pid=48356 exe=D:\dev\github\winshun-dev\ra9fael.rename\rename.exe
+[  OK  ] initialize answered
+[  OK  ] initialize within 3000ms
+[  OK  ] initialize names the plugin
+initialize took 24 ms
+  <- {"id":1,"jsonrpc":"2.0","method":"winshun/tool","params":{"arguments":{"kind":"files","limit":5,"query":"report"},"name":"search_files"}}
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"batch":[{"folder":false,"path":"C:\\Users\\renfei\\AppData\\Local\\Temp\\hs-one2\\report.txt","target":"sum
+[  OK  ] query answered
+query returned 1 item(s)
+   - [rename.row.1] summary.txt  |  ← report.txt
+[  OK  ] batch row answered
+[  OK  ] batch row renamed what it carried
+[  OK  ] shutdown answered
+
+all checks passed

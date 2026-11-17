@@ -7,6 +7,7 @@
 #include "ui/vim_qt.h"
 
 #include <QApplication>
+#include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QPlainTextEdit>
 #include <QTextCursor>
@@ -164,6 +165,90 @@ static void expectText(const Fixture& f, const char* expected)
 }
 
 // ---- gating -----------------------------------------------------------------
+TEST_CASE(BlockInsertReplicatesOnEscapeAndUndoesTogether)
+{
+    Fixture f(QStringLiteral("abc\ndef\nghi"));
+    f.press(Qt::Key_Q, Qt::ControlModifier);
+    f.type("jjI");
+    f.type("prefix-");
+    expectText(f, "prefix-abc\ndef\nghi");
+    f.press(Qt::Key_Escape);
+    expectText(f, "prefix-abc\nprefix-def\nprefix-ghi");
+    f.type("u");
+    expectText(f, "abc\ndef\nghi");
+}
+
+TEST_CASE(BlockDeleteOnlyRemovesRectangle)
+{
+    Fixture f(QStringLiteral("abcd\nefgh\nijkl"));
+    f.type("l");
+    f.press(Qt::Key_Q, Qt::ControlModifier);
+    f.type("jld");
+    expectText(f, "ad\neh\nijkl");
+}
+
+TEST_CASE(BlockInsertBackspaceAndShortRows)
+{
+    Fixture f(QStringLiteral("abcd\nx\nefgh"));
+    f.type("ll");
+    f.press(Qt::Key_Q, Qt::ControlModifier);
+    f.type("jjIxy");
+    f.press(Qt::Key_Backspace);
+    f.press(Qt::Key_Escape);
+    expectText(f, "abxcd\nx\nefxgh");
+}
+
+TEST_CASE(BlockAppendPadsShortRows)
+{
+    Fixture f(QStringLiteral("abcd\nx\nefgh"));
+    f.type("ll");
+    f.press(Qt::Key_Q, Qt::ControlModifier);
+    f.type("jjA!");
+    f.press(Qt::Key_Escape);
+    expectText(f, "abc!d\nx  !\nefg!h");
+}
+
+TEST_CASE(NormalAndGlobalCommands)
+{
+    Fixture f(QStringLiteral("apple\nberry\napricot"));
+    f.type(":g/^a/norm Ipre-");
+    f.press(Qt::Key_Return);
+    expectText(f, "pre-apple\nberry\npre-apricot");
+    f.type("u");
+    expectText(f, "apple\nberry\napricot");
+    f.type(":%norm A.txt");
+    f.press(Qt::Key_Return);
+    expectText(f, "apple.txt\nberry.txt\napricot.txt");
+}
+
+TEST_CASE(SubstituteCommandsSupportRangesFlagsAndUndo)
+{
+    Fixture f(QStringLiteral("apple apple\nberry\napricot"));
+    f.type(":s/apple/orange/");
+    f.press(Qt::Key_Return);
+    expectText(f, "orange apple\nberry\napricot");
+
+    f.type(":%s#apple#pear#g");
+    f.press(Qt::Key_Return);
+    expectText(f, "orange pear\nberry\napricot");
+    f.type("u");
+    expectText(f, "orange apple\nberry\napricot");
+
+    f.type(":%s/APPLE/fruit/gi");
+    f.press(Qt::Key_Return);
+    expectText(f, "orange fruit\nberry\napricot");
+}
+
+TEST_CASE(SubstituteReportsNoMatchAndInvalidPattern)
+{
+    Fixture f(QStringLiteral("apple\nberry"));
+    f.type(":%s/missing/value/g");
+    f.press(Qt::Key_Return);
+    CHECK_EQ(f.filter->statusText(), QStringLiteral("Pattern not found"));
+    f.type(":%s/[broken/value/");
+    f.press(Qt::Key_Return);
+    CHECK_EQ(f.filter->statusText(), QStringLiteral("Invalid pattern"));
+}
 
 TEST_CASE(DisabledByDefaultLeavesTypingAlone)
 {
@@ -436,6 +521,100 @@ TEST_CASE(BlockCaretDisappearsWhenVimIsOff)
     f.filter->setEnabled(false);
     CHECK(!f.filter->blockCaretVisible());
     CHECK(f.edit.cursorWidth() > 0);
+}
+
+// ---- input method (Chinese IME) ----------------------------------------------
+
+TEST_CASE(InputMethodIsOffOutsideInsertMode)
+{
+    Fixture f(QStringLiteral("abc"));
+    // Normal mode: a composing IME must not be able to type into the buffer.
+    CHECK(!f.edit.testAttribute(Qt::WA_InputMethodEnabled));
+    f.type("i");
+    CHECK(f.filter->insertMode());
+    CHECK(f.edit.testAttribute(Qt::WA_InputMethodEnabled));
+    f.press(Qt::Key_Escape);
+    CHECK(!f.edit.testAttribute(Qt::WA_InputMethodEnabled));
+    // Replace mode overwrites characters through the core: no IME either.
+    f.type("R");
+    CHECK(f.filter->replaceMode());
+    CHECK(!f.edit.testAttribute(Qt::WA_InputMethodEnabled));
+    f.press(Qt::Key_Escape);
+    // With vim off the widget is an ordinary editor again.
+    f.filter->setEnabled(false);
+    CHECK(f.edit.testAttribute(Qt::WA_InputMethodEnabled));
+}
+
+TEST_CASE(InputMethodCommitOnlyReachesTheBufferInInsertMode)
+{
+    Fixture f(QStringLiteral("abc"));
+    QInputMethodEvent normal;
+    normal.setCommitString(QStringLiteral("中文"));
+    QApplication::sendEvent(&f.edit, &normal);
+    CHECK_EQ(f.text(), QStringLiteral("abc")); // dropped in Normal mode
+
+    f.type("A");
+    CHECK(f.filter->insertMode());
+    QInputMethodEvent insert;
+    insert.setCommitString(QStringLiteral("中文"));
+    QApplication::sendEvent(&f.edit, &insert);
+    CHECK_EQ(f.text(), QStringLiteral("abc中文"));
+}
+
+// ---- operators with find motions, visual/block replace -----------------------
+
+TEST_CASE(OperatorTakesFindMotions)
+{
+    Fixture f(QStringLiteral("foo,bar"));
+    f.type("dt,");
+    expectText(f, ",bar");
+    f.type("u");
+    expectText(f, "foo,bar");
+    f.type("df,");
+    expectText(f, "bar");
+}
+
+TEST_CASE(VisualAndBlockReplaceThroughKeys)
+{
+    Fixture f(QStringLiteral("abcdef"));
+    f.type("vllrX");
+    expectText(f, "XXXdef");
+    f.type("u");
+    expectText(f, "abcdef");
+    f.type("j"); // single line: j stays put
+    {
+        Fixture b(QStringLiteral("abcd\nx\nefgh"));
+        b.press(Qt::Key_Q, Qt::ControlModifier);
+        b.type("jjlrX");
+        expectText(b, "XXcd\nX\nXXgh");
+        b.type("u");
+        expectText(b, "abcd\nx\nefgh");
+    }
+}
+
+// ---- :q / :q! ----------------------------------------------------------------
+
+TEST_CASE(QuitRequestsAreEmittedForQAndQBang)
+{
+    Fixture f(QStringLiteral("abc"));
+    bool plain = false;
+    bool forced = false;
+    QObject::connect(f.filter, &VimTextFilter::quitRequested, f.filter,
+                     [&plain, &forced](bool force) {
+                         if (force)
+                             forced = true;
+                         else
+                             plain = true;
+                     });
+    f.type(":q");
+    f.press(Qt::Key_Return);
+    CHECK(plain);
+    CHECK(!forced);
+    CHECK_EQ(f.text(), QStringLiteral("abc"));
+    f.type(":q!");
+    f.press(Qt::Key_Return);
+    CHECK(forced);
+    CHECK_EQ(f.text(), QStringLiteral("abc")); // :q! does not edit the text itself
 }
 
 int main(int argc, char** argv)

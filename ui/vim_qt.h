@@ -11,6 +11,11 @@
 //     Replace mode (R) is different by nature: vim overwrites characters, which
 //     a plain QPlainTextEdit cannot do natively, so those keys go to the core
 //     and the input method is switched off for the duration of the mode.
+//   * Outside Insert the input method is switched OFF (WA_InputMethodEnabled
+//     plus an input-method reset), because a Chinese IME composing text in
+//     Normal mode would commit it straight into the widget and bypass the vim
+//     state machine entirely. Any InputMethod event that slips through is
+//     dropped for the same reason.
 //   * Normal/Visual intercept keys except the ones that belong to the window
 //     (Ctrl+S run, Ctrl+Z/Y host undo, Alt/F-key chords).
 //   * vimcore keeps its own undo stack, so "u" and Ctrl+R never touch the
@@ -48,6 +53,7 @@ public:
 
     // The status line the core last asked for ("-- NORMAL --"), for the badge.
     QString status() const { return m_status; }
+    vimcore::Selection selection() const { return m_selection; }
 
     // Called with the cursor's line after every move, so the window can point
     // the preview table at the row being edited.
@@ -56,6 +62,7 @@ public:
 private:
     QPlainTextEdit* m_edit = nullptr;
     QString m_status;
+    vimcore::Selection m_selection;
 };
 
 // Installs itself as an event filter on the editor and translates Qt key events
@@ -76,8 +83,11 @@ public:
     // Re-read the widget after something else changed the buffer (mode switch,
     // apply, external load).
     void resync();
+    void finishEdit();
 
     QString statusText() const;
+    // The raw vimcore mode (Normal/Insert/…); drives the toolbar mode letter.
+    vimcore::Mode mode() const { return m_editor ? m_editor->mode() : vimcore::Mode::Normal; }
     bool insertMode() const;
     bool replaceMode() const;
     // The block cursor is an extra selection, so tests (and the theme code) can
@@ -91,6 +101,9 @@ signals:
     void cursorLineChanged(int line);
     // Emitted when the mode changes, after the caret/input-method state settled.
     void modeChanged(bool insert, bool replace);
+    // ":q" (force == false) or ":q!" (force == true) was typed. The core has no
+    // window, so the window decides what closing means.
+    void quitRequested(bool force);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

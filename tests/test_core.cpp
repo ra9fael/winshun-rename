@@ -631,54 +631,103 @@ std::vector<OilEntry> oilTable()
 
 } // namespace
 
-TEST_CASE(OilParserReadsAnchorsAndDropsIndent)
+TEST_CASE(OilParserReadsStateIdAndName)
 {
-    const std::wstring buffer = L"/1042 report-draft.txt\n      /1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 report-draft.txt\nn 1043 notes.txt\nd 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
 
     CHECK(parsed.errors.empty());
     CHECK_EQ(parsed.lines.size(), std::size_t(3));
     CHECK_EQ(parsed.lines[0].id, 1042LL);
     CHECK_EQ(parsed.lines[0].leaf, std::wstring(L"report-draft.txt"));
+    CHECK_EQ(parsed.lines[0].state, OilState::Rename);
     CHECK_EQ(parsed.lines[1].leaf, std::wstring(L"notes.txt"));
-    CHECK(parsed.lines[2].isFolder);
+    CHECK_EQ(parsed.lines[1].state, OilState::Skip);
     CHECK_EQ(parsed.lines[2].leaf, std::wstring(L"photos"));
+    CHECK_EQ(parsed.lines[2].state, OilState::Delete);
 }
 
-TEST_CASE(OilParserRejectsLineWithoutAnchor)
+TEST_CASE(OilParserAcceptsUppercaseStateLetters)
 {
-    const std::wstring buffer = L"/1042 report-draft.txt\nno-anchor.txt\n";
-    const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
+    const OilParseResult parsed = ParseOilBuffer(L"Y 1042 a.txt\nN 1043 b.txt\nD 1044 c.txt\n", oilTable());
+    CHECK(parsed.errors.empty());
+    CHECK_EQ(parsed.lines.size(), std::size_t(3));
+    CHECK_EQ(parsed.lines[0].state, OilState::Rename);
+    CHECK_EQ(parsed.lines[1].state, OilState::Skip);
+    CHECK_EQ(parsed.lines[2].state, OilState::Delete);
+}
+
+TEST_CASE(OilParserAcceptsNamesWithSpaces)
+{
+    const OilParseResult parsed = ParseOilBuffer(L"y 1042 my long name.txt\n", oilTable());
+    CHECK(parsed.errors.empty());
+    CHECK_EQ(parsed.lines.size(), std::size_t(1));
+    CHECK_EQ(parsed.lines[0].leaf, std::wstring(L"my long name.txt"));
+}
+
+TEST_CASE(OilParserRejectsLineWithoutStateLetter)
+{
+    // A bare name is the "create" gesture, which release one refuses.
+    const OilParseResult parsed = ParseOilBuffer(L"y 1042 a.txt\nhello.txt\n", oilTable());
     CHECK_EQ(parsed.errors.size(), std::size_t(1));
-    CHECK_EQ(parsed.errors[0].kind, OilErrorKind::NoAnchor);
     CHECK_EQ(parsed.errors[0].line, std::size_t(2));
+
+    // A digit first is not a state letter either.
+    const OilParseResult digits = ParseOilBuffer(L"1042 a.txt\n", oilTable());
+    CHECK_EQ(digits.errors.size(), std::size_t(1));
+    CHECK_EQ(digits.errors[0].kind, OilErrorKind::NoAnchor);
+}
+
+TEST_CASE(OilParserRejectsUnknownStateLetter)
+{
+    const OilParseResult parsed = ParseOilBuffer(L"x 1042 a.txt\n", oilTable());
+    CHECK_EQ(parsed.errors.size(), std::size_t(1));
+    CHECK_EQ(parsed.errors[0].kind, OilErrorKind::UnknownState);
+}
+
+TEST_CASE(OilParserRejectsIndentedLine)
+{
+    // The first column is the state, so leading indentation can no longer be
+    // treated as presentation-only.
+    const OilParseResult parsed = ParseOilBuffer(L"  y 1042 a.txt\n", oilTable());
+    CHECK_EQ(parsed.errors.size(), std::size_t(1));
 }
 
 TEST_CASE(OilParserRejectsMalformedAnchor)
 {
-    const OilParseResult parsed = ParseOilBuffer(L"/abc name.txt\n", oilTable());
-    CHECK_EQ(parsed.errors.size(), std::size_t(1));
-    CHECK_EQ(parsed.errors[0].kind, OilErrorKind::MalformedAnchor);
+    const OilParseResult missingId = ParseOilBuffer(L"y abc name.txt\n", oilTable());
+    CHECK_EQ(missingId.errors.size(), std::size_t(1));
+    CHECK_EQ(missingId.errors[0].kind, OilErrorKind::MalformedAnchor);
+
+    // Digits glued to the name would silently attach the rename to the wrong file.
+    const OilParseResult glued = ParseOilBuffer(L"y 1042a.txt\n", oilTable());
+    CHECK_EQ(glued.errors.size(), std::size_t(1));
+    CHECK_EQ(glued.errors[0].kind, OilErrorKind::MalformedAnchor);
+
+    // std::stoll would throw on this one; it must be reported, not crash.
+    const OilParseResult overflow = ParseOilBuffer(L"y 99999999999999999999 a.txt\n", oilTable());
+    CHECK_EQ(overflow.errors.size(), std::size_t(1));
+    CHECK_EQ(overflow.errors[0].kind, OilErrorKind::MalformedAnchor);
 }
 
 TEST_CASE(OilParserRejectsPathSeparator)
 {
     // A rename must never move the item.
-    const OilParseResult parsed = ParseOilBuffer(L"/1042 sub/report.txt\n", oilTable());
+    const OilParseResult parsed = ParseOilBuffer(L"y 1042 sub/report.txt\n", oilTable());
     CHECK_EQ(parsed.errors.size(), std::size_t(1));
     CHECK_EQ(parsed.errors[0].kind, OilErrorKind::PathSeparator);
 }
 
 TEST_CASE(OilParserRejectsLinkSyntax)
 {
-    const OilParseResult parsed = ParseOilBuffer(L"/1042 notes -> /target\n", oilTable());
+    const OilParseResult parsed = ParseOilBuffer(L"y 1042 notes -> /target\n", oilTable());
     CHECK_EQ(parsed.errors.size(), std::size_t(1));
     CHECK_EQ(parsed.errors[0].kind, OilErrorKind::LinkUnsupported);
 }
 
 TEST_CASE(OilParserToleratesCrlfAndBlankLines)
 {
-    const std::wstring buffer = L"/1042 report-draft.txt\r\n\r\n/1043 notes.txt\r\n";
+    const std::wstring buffer = L"y 1042 report-draft.txt\r\n\r\nn 1043 notes.txt\r\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     CHECK(parsed.errors.empty());
     CHECK_EQ(parsed.lines.size(), std::size_t(2));
@@ -686,7 +735,7 @@ TEST_CASE(OilParserToleratesCrlfAndBlankLines)
 
 TEST_CASE(OilDifferEmitsRenameForChangedLeaf)
 {
-    const std::wstring buffer = L"/1042 report-final.txt\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 report-final.txt\nn 1043 notes.txt\ny 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
 
@@ -698,14 +747,14 @@ TEST_CASE(OilDifferEmitsRenameForChangedLeaf)
 
 TEST_CASE(OilDifferNoDiffWhenUnchanged)
 {
-    const std::wstring buffer = L"/1042 report-draft.txt\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 report-draft.txt\nn 1043 notes.txt\ny 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     CHECK(DiffOilBuffer(parsed, oilTable()).empty());
 }
 
 TEST_CASE(OilDifferRejectsUnknownId)
 {
-    const std::wstring buffer = L"/9999 ghost.txt\n/1042 report-draft.txt\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 9999 ghost.txt\ny 1042 report-draft.txt\nn 1043 notes.txt\ny 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
 
@@ -718,25 +767,90 @@ TEST_CASE(OilDifferRejectsUnknownId)
     CHECK(sawUnknown);
 }
 
-TEST_CASE(OilDifferSkipsVanishedId)
+TEST_CASE(OilDifferRejectsVanishedId)
 {
-    // A vanished line is a safe skip, not a delete: the file stays on disk.
-    const std::wstring buffer = L"/1042 report-draft.txt\n/1044 photos/\n";
+    // Removing a line is a mistake now: deleting is spelled "d" so an accidental
+    // line removal can never delete a file.
+    const std::wstring buffer = L"y 1042 report-draft.txt\ny 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
 
-    bool sawSkip = false;
+    bool sawMissing = false;
     for (const OilDiff& diff : diffs)
     {
-        if (diff.kind == OilDiffKind::Skipped && diff.id == 1043)
-            sawSkip = true;
+        if (diff.kind == OilDiffKind::Rejected && diff.reason == OilErrorKind::MissingLine
+            && diff.id == 1043)
+            sawMissing = true;
     }
-    CHECK(sawSkip);
+    CHECK(sawMissing);
+}
+
+TEST_CASE(OilDifferTurnsDStateIntoDelete)
+{
+    const std::wstring buffer = L"y 1042 report-draft.txt\nd 1043 notes.txt\ny 1044 photos\n";
+    const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
+    const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
+
+    CHECK_EQ(diffs.size(), std::size_t(1));
+    CHECK_EQ(diffs[0].kind, OilDiffKind::Delete);
+    CHECK_EQ(diffs[0].id, 1043LL);
+}
+
+TEST_CASE(OilPlanMakesDStateAPendingDelete)
+{
+    const PreviewPlan plan = BuildOilPlan(L"y 1042 report-draft.txt\nd 1043 notes.txt\ny 1044 photos\n",
+                                          oilTable(), 0, NextPlanId());
+    const PlanItem* row = nullptr;
+    for (const PlanItem& candidate : plan.items)
+        if (candidate.id == "1043") row = &candidate;
+    CHECK(row != nullptr);
+    if (row)
+    {
+        CHECK_EQ(row->action, Action::Delete);
+        CHECK_EQ(row->status, Status::Ready);
+    }
+}
+
+TEST_CASE(OilPlanRejectsAMissingLine)
+{
+    // A user who deletes a line by accident gets a blocking error, not a delete.
+    const PreviewPlan plan = BuildOilPlan(L"y 1042 report-draft.txt\ny 1044 photos\n",
+                                          oilTable(), 0, NextPlanId());
+    CHECK(plan.HasBlockingError());
+    for (const PlanItem& row : plan.items)
+    {
+        if (row.id != "1043")
+            continue;
+        CHECK_EQ(row.action, Action::Rename);
+        CHECK_EQ(row.status, Status::ErrorBadRule);
+    }
+}
+
+TEST_CASE(OilPlanUsesNStateAsUnselected)
+{
+    const PreviewPlan plan = BuildOilPlan(L"y 1042 report-draft.txt\nn 1043 notes.txt\ny 1044 photos\n",
+                                          oilTable(), 0, NextPlanId());
+    const PlanItem* row = nullptr;
+    for (const PlanItem& candidate : plan.items)
+        if (candidate.id == "1043") row = &candidate;
+    CHECK(row != nullptr);
+    if (row)
+        CHECK(!row->selected);
+}
+
+TEST_CASE(OilPlanTreatsAnEmptyBufferAsAnError)
+{
+    // An empty buffer is far more likely to be a paste accident than a request to
+    // delete every file, so it blocks instead of deleting.
+    const PreviewPlan plan = BuildOilPlan(L"", oilTable(), 0, NextPlanId());
+    CHECK(plan.HasBlockingError());
+    for (const PlanItem& row : plan.items)
+        CHECK_EQ(row.action, Action::Rename);
 }
 
 TEST_CASE(OilDifferRejectsDuplicateId)
 {
-    const std::wstring buffer = L"/1042 a.txt\n/1042 b.txt\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 a.txt\ny 1042 b.txt\nn 1043 notes.txt\ny 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, oilTable());
     const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, oilTable());
 
@@ -753,7 +867,7 @@ TEST_CASE(OilDifferRejectsDuplicateNamesCaseInsensitively)
 {
     // Windows would treat these as the same name.
     std::vector<OilEntry> table = oilTable();
-    const std::wstring buffer = L"/1042 Report.txt\n/1043 report.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 Report.txt\ny 1043 report.txt\ny 1044 photos\n";
     const OilParseResult parsed = ParseOilBuffer(buffer, table);
     const std::vector<OilDiff> diffs = DiffOilBuffer(parsed, table);
 
@@ -769,7 +883,7 @@ TEST_CASE(OilDifferRejectsDuplicateNamesCaseInsensitively)
 TEST_CASE(OilPlanUsesSharedFinalization)
 {
     // Trailing dots get trimmed by the same pipeline control mode uses.
-    const std::wstring buffer = L"/1042 report-draft.txt.\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 report-draft.txt.\nn 1043 notes.txt\ny 1044 photos\n";
     const PreviewPlan plan = BuildOilPlan(buffer, oilTable(), 0, NextPlanId());
 
     const PlanItem* row = nullptr;
@@ -789,7 +903,7 @@ TEST_CASE(OilPlanUsesSharedFinalization)
 
 TEST_CASE(OilPlanMarksParseErrorsAsBlocking)
 {
-    const std::wstring buffer = L"/1042 report-draft.txt\nno-anchor-here\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 report-draft.txt\nno-anchor-here\nn 1043 notes.txt\ny 1044 photos\n";
     const PreviewPlan plan = BuildOilPlan(buffer, oilTable(), 0, NextPlanId());
     CHECK(plan.HasBlockingError());
 }
@@ -806,7 +920,7 @@ TEST_CASE(BothModesAgreeOnStatusForSameName)
 
     std::vector<OilEntry> table = oilTable();
     table[0].originalLeaf = L"orig.txt";
-    const std::wstring buffer = L"/1042 bad?.txt\n/1043 notes.txt\n/1044 photos/\n";
+    const std::wstring buffer = L"y 1042 bad?.txt\nn 1043 notes.txt\ny 1044 photos\n";
     const PreviewPlan oilPlan = BuildOilPlan(buffer, table, 0, NextPlanId());
 
     Status oilStatus = Status::Init;

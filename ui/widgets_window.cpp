@@ -11,18 +11,23 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDockWidget>
+#include <QDialog>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QDir>
 #include <QHeaderView>
 #include <QIcon>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMainWindow>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
@@ -31,14 +36,20 @@
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QStyledItemDelegate>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QMenu>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QKeyEvent>
 #include <QShortcut>
 #include <QStyle>
 #include <QStackedWidget>
 #include <QTableView>
+#include <QTabBar>
+#include <QTextBrowser>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -251,6 +262,22 @@ private:
     const Theme* m_theme = nullptr;
 };
 
+class PathLabel : public QWidget
+{
+public:
+    using QWidget::QWidget;
+    QString path;
+    QSize sizeHint() const override { return QSize(80, 28); }
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setPen(palette().color(QPalette::WindowText));
+        painter.drawText(rect(), Qt::AlignVCenter | Qt::AlignLeft,
+                         fontMetrics().elidedText(path, Qt::ElideLeft, width()));
+    }
+};
+
 class CheckDelegate : public QStyledItemDelegate
 {
 public:
@@ -267,7 +294,9 @@ public:
             return;
 
         painter->save();
-        if (option.state & (QStyle::State_Selected | QStyle::State_MouseOver))
+        if (option.state & QStyle::State_Selected)
+            painter->fillRect(option.rect, m_theme->selection);
+        else if (option.state & QStyle::State_MouseOver)
             painter->fillRect(option.rect, m_theme->hover);
 
         const bool checked = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
@@ -276,6 +305,32 @@ public:
         PaintCheck(*painter, box, checked, option.state & QStyle::State_MouseOver,
                    *m_theme, option.state & QStyle::State_Enabled);
         painter->restore();
+    }
+
+    bool editorEvent(QEvent* event, QAbstractItemModel* model,
+                     const QStyleOptionViewItem& option, const QModelIndex& index) override
+    {
+        if (!index.isValid() || !model || index.column() != 0)
+            return false;
+        if (event->type() == QEvent::MouseButtonRelease)
+        {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (option.rect.contains(mouse->position().toPoint()))
+            {
+                const bool checked = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
+                return model->setData(index, checked ? Qt::Unchecked : Qt::Checked, Qt::CheckStateRole);
+            }
+        }
+        if (event->type() == QEvent::KeyPress)
+        {
+            const auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Space)
+            {
+                const bool checked = index.data(Qt::CheckStateRole).toInt() == Qt::Checked;
+                return model->setData(index, checked ? Qt::Unchecked : Qt::Checked, Qt::CheckStateRole);
+            }
+        }
+        return QStyledItemDelegate::editorEvent(event, model, option, index);
     }
 
 private:
@@ -302,13 +357,15 @@ public:
             return;
 
         painter->save();
-        if (option.state & (QStyle::State_Selected | QStyle::State_MouseOver))
+        if (option.state & QStyle::State_Selected)
+            painter->fillRect(option.rect, m_theme->selection);
+        else if (option.state & QStyle::State_MouseOver)
             painter->fillRect(option.rect, m_theme->hover);
 
         const QString original = index.data(rename_qml::PreviewModel::OriginalRole).toString();
         const QString target = index.data(rename_qml::PreviewModel::TargetRole).toString();
         const int status = index.data(rename_qml::PreviewModel::StatusRole).toInt();
-        const bool skipped = index.data(rename_qml::PreviewModel::SkippedRole).toBool();
+        const bool pendingDelete = index.data(rename_qml::PreviewModel::PendingDeleteRole).toBool();
         const bool error = status == static_cast<int>(rename_core::Status::ErrorAlreadyExists)
                         || status == static_cast<int>(rename_core::Status::ErrorTooLong)
                         || status == static_cast<int>(rename_core::Status::ErrorInvalidCharacter)
@@ -317,22 +374,22 @@ public:
         const bool unchanged = status == static_cast<int>(rename_core::Status::Unchanged);
         const bool ready = status == static_cast<int>(rename_core::Status::Ready);
 
-        QColor plain = error ? m_theme->danger
-                      : skipped ? m_theme->subtext
+        QColor plain = error || pendingDelete ? m_theme->danger
                       : unchanged ? m_theme->faint
                       : m_theme->text;
-        QColor highlight = error ? m_theme->danger
-                         : skipped ? m_theme->subtext
+        QColor highlight = error || pendingDelete ? m_theme->danger
                          : m_theme->accent;
 
         QFont font = option.font;
-        if (ready && !error && !skipped)
+        if (ready && !error && !pendingDelete)
             font.setBold(true);
+        if (pendingDelete)
+            font.setStrikeOut(true);
         painter->setFont(font);
         painter->setClipRect(option.rect);
 
         // Only a row that will actually rename gets the two-colour treatment.
-        const bool changed = ready && target != original;
+        const bool changed = ready && !pendingDelete && target != original;
         int prefix = 0;
         int suffix = 0;
         if (changed)
@@ -382,12 +439,12 @@ private:
 } // namespace
 
 Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
-    : QWidget(parent)
+    : QMainWindow(parent)
     , m_bridge(bridge)
 {
     setWindowTitle(T("批量重命名", "Batch Rename"));
-    setMinimumSize(700, 520);
-    resize(822, 616);
+    setMinimumSize(700, 680);
+    resize(1000, 720);
     QIcon windowIcon;
     windowIcon.addFile(QStringLiteral(":/resources/icons/app-16.png"));
     windowIcon.addFile(QStringLiteral(":/resources/icons/app-256.png"));
@@ -417,45 +474,40 @@ Window::~Window()
 
 void Window::BuildUi()
 {
-    auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    setContextMenuPolicy(Qt::PreventContextMenu);
 
-    // ---- title strip ------------------------------------------------------
-    auto* top = new QWidget(this);
-    top->setFixedHeight(38);
-    top->setObjectName(QStringLiteral("topBar"));
-    auto* topLayout = new QHBoxLayout(top);
-    topLayout->setContentsMargins(12, 0, 8, 0);
-    topLayout->setSpacing(8);
-
-    // No Unicode pencil/arrow glyphs here: U+270E and U+23F7 make Qt fall back
-    // to Segoe UI Emoji/Symbol, which costs ~120 MB of private memory on this
-    // machine (measured). The title is text only; the arrows are painted.
-    m_title = new QLabel(T("批量重命名", "Batch Rename"), top);
-    m_title->setObjectName(QStringLiteral("topTitle"));
-    topLayout->addWidget(m_title);
-    topLayout->addStretch(1);
-
-    const auto makeModeButton = [this, top](const QString& text, const QString& target) {
-        auto* button = new QToolButton(top);
-        button->setText(text);
-        button->setCheckable(true);
-        button->setAutoExclusive(true);
-        button->setObjectName(QStringLiteral("modeButton"));
+    const auto makeGlyphButton = [this](QChar glyph, const QString& tip) {
+        auto* button = new QToolButton(this);
+        button->setProperty("phGlyph", glyph.unicode());
+        button->setToolTip(tip);
+        button->setObjectName(QStringLiteral("toolbarGlyph"));
         button->setCursor(Qt::PointingHandCursor);
-        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        button->setFixedHeight(24);
-        connect(button, &QToolButton::clicked, this, [this, target] { RequestMode(target); });
+        button->setFixedSize(30, 26);
+        button->setAccessibleName(tip);
         return button;
     };
-    m_modeRules = makeModeButton(T("规则", "Rules"), QStringLiteral("control"));
-    m_modeText = makeModeButton(T("文本", "Text"), QStringLiteral("text"));
-    topLayout->addWidget(m_modeRules);
-    topLayout->addWidget(m_modeText);
 
-    root->addWidget(top);
-    root->addWidget(Divider(Qt::Horizontal, this));
+    m_vimToggle = new QToolButton(this);
+    m_vimToggle->setText(QStringLiteral("VIM"));
+    m_vimToggle->setCheckable(true);
+    m_vimToggle->setObjectName(QStringLiteral("vimToggle"));
+    m_vimToggle->setCursor(Qt::PointingHandCursor);
+    m_vimToggle->setFixedHeight(26);
+    // One width for "Vim" and every mode letter keeps the status bar stable.
+    m_vimToggle->setFixedWidth(40);
+    m_vimToggle->setToolTip(T("Vim 按键模式（默认关闭）", "Vim key bindings (off by default)"));
+
+    m_apply = new QPushButton(T("重命名", "Rename"), this);
+    m_apply->setObjectName(QStringLiteral("statusApply"));
+    m_apply->setProperty("phGlyph", 0xEB0A);
+    m_apply->setToolTip(T("执行重命名（Ctrl+S）", "Run rename (Ctrl+S)"));
+    // Compact chip that matches the status-bar badges and the Vim toggle; the
+    // flexible hint text is the part that yields space, never this button.
+    m_apply->setFixedHeight(26);
+    m_apply->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    auto* helpButton = makeGlyphButton(QChar(0xE3E8), T("帮助", "Help"));
+    helpButton->setObjectName(QStringLiteral("statusHelp"));
 
     // ---- directory bar ----------------------------------------------------
     auto* pathBar = new QWidget(this);
@@ -469,12 +521,28 @@ void Window::BuildUi()
     m_up->setObjectName(QStringLiteral("chipButton"));
     m_up->setToolTip(T("上一级", "Parent folder"));
     m_up->setCursor(Qt::PointingHandCursor);
+    m_up->setProperty("phGlyph", 0xE08E);
+    m_up->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_up->setFixedSize(30, 28);
     pathLayout->addWidget(m_up);
+
+    m_breadcrumb = new QWidget(pathBar);
+    m_breadcrumbLayout = new QHBoxLayout(m_breadcrumb);
+    m_breadcrumbLayout->setContentsMargins(7, 0, 7, 0);
+    m_breadcrumbLayout->setSpacing(2);
+    m_breadcrumb->setObjectName(QStringLiteral("breadcrumb"));
+    m_breadcrumb->setMinimumWidth(0);
+    m_breadcrumb->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_breadcrumb->setToolTip(T("双击路径栏编辑完整路径",
+                               "Double-click to edit the full path"));
+    m_breadcrumb->installEventFilter(this);
+    pathLayout->addWidget(m_breadcrumb, 1);
 
     m_path = new QLineEdit(pathBar);
     m_path->setPlaceholderText(T("文件夹", "Folder"));
     m_path->setClearButtonEnabled(false);
     m_path->setToolTip(T("回车进入这个文件夹", "Press Enter to open this folder"));
+    m_path->setVisible(false);
     pathLayout->addWidget(m_path, 1);
 
     m_browse = new QToolButton(pathBar);
@@ -482,6 +550,9 @@ void Window::BuildUi()
     m_browse->setObjectName(QStringLiteral("chipButton"));
     m_browse->setToolTip(T("选择目录", "Choose a folder"));
     m_browse->setCursor(Qt::PointingHandCursor);
+    m_browse->setProperty("phGlyph", 0xE256);
+    m_browse->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_browse->setFixedSize(30, 28);
     pathLayout->addWidget(m_browse);
 
     m_reload = new QToolButton(pathBar);
@@ -489,23 +560,24 @@ void Window::BuildUi()
     m_reload->setObjectName(QStringLiteral("chipButton"));
     m_reload->setToolTip(T("重新读取这个文件夹", "Reload this folder"));
     m_reload->setCursor(Qt::PointingHandCursor);
+    m_reload->setProperty("phGlyph", 0xE036);
+    m_reload->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_reload->setFixedSize(30, 28);
     pathLayout->addWidget(m_reload);
 
-    root->addWidget(pathBar);
-    root->addWidget(Divider(Qt::Horizontal, this));
-
-    // ---- body -------------------------------------------------------------
-    auto* body = new QHBoxLayout;
-    body->setContentsMargins(0, 0, 0, 0);
-    body->setSpacing(0);
-    root->addLayout(body, 1);
-
-    // Left: rule form / text editor.
+    // Left: rules or text editor, resized with the native dock separator.
     auto* left = new QWidget(this);
-    left->setFixedWidth(348);
+    left->setMinimumWidth(280);
     auto* leftLayout = new QVBoxLayout(left);
     leftLayout->setContentsMargins(16, 14, 16, 13);
     leftLayout->setSpacing(0);
+
+    m_editorTabs = new QTabBar(left);
+    m_editorTabs->addTab(T("规则", "Rules"));
+    m_editorTabs->addTab(T("文本", "Text"));
+    m_editorTabs->setExpanding(false);
+    m_editorTabs->setObjectName(QStringLiteral("editorTabs"));
+    leftLayout->addWidget(m_editorTabs);
 
     m_leftStack = new QStackedWidget(left);
     leftLayout->addWidget(m_leftStack, 1);
@@ -647,66 +719,33 @@ void Window::BuildUi()
     textLayout->setContentsMargins(0, 0, 0, 0);
     textLayout->setSpacing(0);
 
-    // The text page's own header: the vim toggle on the left, the mode badge on
-    // the right. Vim mode is off by default, so this row reads as an option and
-    // not as a new required step.
-    auto* textHead = new QHBoxLayout;
-    textHead->setContentsMargins(0, 0, 0, 0);
-    textHead->setSpacing(8);
-    m_vimToggle = new QToolButton(textPage);
-    m_vimToggle->setText(T("Vim", "Vim"));
-    m_vimToggle->setCheckable(true);
-    m_vimToggle->setObjectName(QStringLiteral("chipButton"));
-    m_vimToggle->setCursor(Qt::PointingHandCursor);
-    m_vimToggle->setFixedHeight(26);
-    m_vimToggle->setToolTip(T("Vim 按键模式（默认关闭）", "Vim key bindings (off by default)"));
-    textHead->addWidget(m_vimToggle);
-    textHead->addStretch(1);
-    m_vimBadge = new QLabel(textPage);
-    m_vimBadge->setObjectName(QStringLiteral("caption"));
-    m_vimBadge->setToolTip(T("当前 Vim 模式", "Current vim mode"));
-    textHead->addWidget(m_vimBadge);
-    textLayout->addLayout(textHead);
-    textLayout->addSpacing(8);
-
-    auto* textHint = new QLabel(
-        T("每行一项：/<编号> 新名字；文件夹以 / 结尾。Ctrl+S 执行。",
-          "One item per line: /<id> new name; folders end with /. Ctrl+S runs it."),
-        textPage);
-    textHint->setObjectName(QStringLiteral("caption"));
-    textHint->setWordWrap(true);
-    textLayout->addWidget(textHint);
-    textLayout->addSpacing(8);
-
     m_text = new QPlainTextEdit(textPage);
     m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
     m_text->setFont(m_theme->mono);
+    m_text->setObjectName(QStringLiteral("renameTextEditor"));
     m_text->setTabStopDistance(4 * QFontMetricsF(m_theme->mono).horizontalAdvance(QLatin1Char(' ')));
     textLayout->addWidget(m_text, 1);
+
+    // The vim command/status line: ":norm a b" while typing a command,
+    // "-- NORMAL --" otherwise. Always visible while vim is on (so the editor
+    // does not jump when the line appears), hidden entirely when vim is off.
+    m_vimCommandLine = new QLabel(textPage);
+    m_vimCommandLine->setObjectName(QStringLiteral("vimCommandLine"));
+    m_vimCommandLine->setFont(m_theme->mono);
+    m_vimCommandLine->setFixedHeight(22);
+    m_vimCommandLine->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    m_vimCommandLine->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_vimCommandLine->setVisible(false);
+    textLayout->addWidget(m_vimCommandLine);
+
     m_leftStack->addWidget(textPage);
-
-    // The one verb, shared by both modes.
-    auto* bottom = new QWidget(left);
-    auto* bottomLayout = new QHBoxLayout(bottom);
-    bottomLayout->setContentsMargins(0, 10, 0, 0);
-    bottomLayout->setSpacing(8);
-    bottomLayout->addStretch(1);
-    m_apply = new QPushButton(T("重命名", "Rename"), bottom);
-    m_apply->setObjectName(QStringLiteral("primary"));
-    m_apply->setCursor(Qt::PointingHandCursor);
-    m_apply->setMinimumWidth(152);
-    m_apply->setMinimumHeight(33);
-    bottomLayout->addWidget(m_apply);
-    leftLayout->addWidget(bottom);
-
-    body->addWidget(left);
-    body->addWidget(Divider(Qt::Vertical, this));
 
     // Right: table.
     auto* right = new QWidget(this);
     auto* rightLayout = new QVBoxLayout(right);
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(0);
+    rightLayout->addWidget(pathBar);
 
     auto* header = new QWidget(right);
     header->setFixedHeight(33);
@@ -729,15 +768,21 @@ void Window::BuildUi()
     m_targetHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     headerLayout->addWidget(m_targetHeader, 1);
 
+    auto* statusHeader = new QLabel(header);
+    statusHeader->setObjectName(QStringLiteral("caption"));
+    statusHeader->setFixedWidth(78);
+    statusHeader->setText(T("状态", "Status"));
+    headerLayout->addWidget(statusHeader);
+
     m_filter = new ComboBox(m_theme, header);
     m_filter->addItem(T("全部", "All"));
     m_filter->addItem(T("已选", "Selected"));
     m_filter->addItem(T("可改", "Applicable"));
     m_filter->addItem(T("要改", "To rename"));
-    m_filter->setFixedWidth(108);
+    m_filter->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     m_filter->setToolTip(T("筛选显示的条目，不改变要执行的集合", "Filter the rows shown; the batch itself is unchanged"));
-    headerLayout->addSpacing(6);
-    headerLayout->addWidget(m_filter);
+    m_filter->setFixedHeight(28);
+    pathLayout->addWidget(m_filter);
     rightLayout->addWidget(header);
     rightLayout->addWidget(Divider(Qt::Horizontal, right));
 
@@ -758,6 +803,8 @@ void Window::BuildUi()
     m_table->setColumnWidth(0, 34);
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
+    m_table->setColumnWidth(3, 78);
     m_table->setItemDelegateForColumn(0, new CheckDelegate(m_theme, m_table));
     m_table->setItemDelegateForColumn(2, new TargetDelegate(m_theme, m_table));
     m_tableStack->addWidget(m_table);
@@ -769,30 +816,144 @@ void Window::BuildUi()
     m_tableStack->addWidget(m_empty);
     rightLayout->addWidget(m_tableStack, 1);
 
-    auto* footer = new QWidget(right);
-    footer->setFixedHeight(30);
-    auto* footerLayout = new QHBoxLayout(footer);
-    footerLayout->setContentsMargins(14, 0, 14, 0);
-    footerLayout->setSpacing(8);
+    auto* footer = statusBar();
+    footer->setSizeGripEnabled(false);
+    footer->setMinimumHeight(38);
+    auto* statusContent = new QWidget(footer);
+    auto* statusLayout = new QHBoxLayout(statusContent);
+    statusLayout->setContentsMargins(14, 4, 14, 4);
+    statusLayout->setSpacing(6);
 
-    m_dot = new QLabel(footer);
-    m_dot->setFixedSize(8, 8);
-    footerLayout->addWidget(m_dot);
+    auto* statusLeft = new QWidget(statusContent);
+    auto* statusLeftLayout = new QHBoxLayout(statusLeft);
+    statusLeftLayout->setContentsMargins(0, 0, 0, 0);
+    statusLeftLayout->setSpacing(6);
+    // Help sits at the far left and rename at the far right; the mode, caret
+    // position and counts stay grouped on the left, the hint takes the gap.
+    helpButton->setParent(statusContent);
+    helpButton->setFixedSize(30, 26);
+    statusLayout->addWidget(helpButton, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    auto* helpDivider = Divider(Qt::Vertical, statusContent);
+    helpDivider->setFixedHeight(20);
+    statusLayout->addWidget(helpDivider);
+    statusLayout->addWidget(statusLeft, 0, Qt::AlignLeft | Qt::AlignVCenter);
 
-    m_status = new QLabel(footer);
-    m_status->setObjectName(QStringLiteral("caption"));
-    footerLayout->addWidget(m_status);
-    footerLayout->addStretch(1);
+    m_vimToggle->setParent(statusLeft);
+    statusLeftLayout->addWidget(m_vimToggle);
+    m_cursorPosition = new QLabel(statusContent);
+    m_cursorPosition->setObjectName(QStringLiteral("cursorPosition"));
+    m_cursorPosition->setMinimumWidth(48);
+    m_cursorPosition->setAlignment(Qt::AlignCenter);
+    m_cursorPosition->setFont(m_theme->mono);
+    m_cursorPosition->setParent(statusLeft);
+    statusLeftLayout->addWidget(m_cursorPosition);
+    auto* editorDivider = Divider(Qt::Vertical, statusLeft);
+    editorDivider->setFixedHeight(20);
+    statusLeftLayout->addWidget(editorDivider);
 
-    m_hint = new QLabel(footer);
+    const auto makeBadge = [statusLeft](QLabel*& target) {
+        target = new QLabel(statusLeft);
+        target->setAlignment(Qt::AlignCenter);
+        target->setMinimumHeight(22);
+        return target;
+    };
+    makeBadge(m_readyBadge);
+    makeBadge(m_conflictBadge);
+    makeBadge(m_deleteBadge);
+    statusLeftLayout->addWidget(m_readyBadge);
+    statusLeftLayout->addWidget(m_conflictBadge);
+    statusLeftLayout->addWidget(m_deleteBadge);
+    auto* countDivider = Divider(Qt::Vertical, statusLeft);
+    countDivider->setFixedHeight(20);
+    statusLeftLayout->addWidget(countDivider);
+    m_hint = new QLabel(statusContent);
     m_hint->setObjectName(QStringLiteral("caption"));
     m_hint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_hint->setMinimumWidth(190);
+    m_hint->setMinimumWidth(0);
     m_hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    footerLayout->addWidget(m_hint, 1);
-    rightLayout->addWidget(footer);
+    statusLayout->addWidget(m_hint, 1);
+    auto* actionDivider = Divider(Qt::Vertical, statusContent);
+    actionDivider->setFixedHeight(20);
+    statusLayout->addWidget(actionDivider);
+    m_apply->setParent(statusContent);
+    statusLayout->addWidget(m_apply, 0, Qt::AlignRight | Qt::AlignVCenter);
+    footer->addPermanentWidget(statusContent, 1);
 
-    body->addWidget(right, 1);
+    // One editor dock contains the two editor tabs. This keeps the default
+    // layout deterministic and prevents the rules/text surfaces from splitting
+    // into separate floating windows.
+    auto* editorDock = new QDockWidget(T("编辑区", "Editor"), this);
+    editorDock->setObjectName(QStringLiteral("renameEditorDock"));
+    editorDock->setAllowedAreas(Qt::LeftDockWidgetArea);
+    editorDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    editorDock->setWidget(left);
+
+    auto* filesDock = new QDockWidget(T("文件列表", "File list"), this);
+    filesDock->setObjectName(QStringLiteral("renameFilesDock"));
+    filesDock->setAllowedAreas(Qt::RightDockWidgetArea);
+    filesDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    filesDock->setWidget(right);
+
+    addDockWidget(Qt::LeftDockWidgetArea, editorDock);
+    addDockWidget(Qt::RightDockWidgetArea, filesDock);
+    resizeDocks({editorDock, filesDock}, {500, 500}, Qt::Horizontal);
+
+    connect(m_editorTabs, &QTabBar::currentChanged, this, [this](int index) {
+        m_leftStack->setCurrentIndex(index);
+        RequestMode(index == 1 ? QStringLiteral("text") : QStringLiteral("control"));
+    });
+
+    auto* helpBrowser = new QTextBrowser(this);
+    helpBrowser->setOpenExternalLinks(false);
+    helpBrowser->setFrameShape(QFrame::NoFrame);
+    helpBrowser->setText(T(
+        "筛选只改变列表显示，不改变实际执行集合。\n\n"
+        "全部：显示所有条目，包括不变和有问题的条目。\n"
+        "已选：只显示当前勾选的条目。\n"
+        "可改：显示没有错误、且目标名称不同的条目。\n"
+        "要改：显示已选且可以执行重命名的条目。\n\n"
+        "文本模式中的 Vim：开启后，j/k 移动行，h/l 移动字符，dd 标记待删除，u 恢复。\n"
+        "待删除行会保留在列表中，并以淡红背景、删除线和状态列提示。\n\n"
+        "Ctrl+Q：列选择；j/k 扩展行，I 在块首插入，A 在块尾插入，r 替换块内字符，Esc 将输入扩散到其他选中行。\n"
+        "df, / dt, / dF, / dT,：d 支持 f F t T 位移；d; 和 d, 重复上一次查找。v/V/Ctrl+Q 里按 r 替换选中字符。\n"
+        "Ctrl+S：结束当前插入并确认重命名。\n"
+        ":q 关闭窗口（还有未执行的修改会拒绝），:q! 放弃这些修改并关闭。\n"
+        ":%norm A.txt：在每行末尾追加 .txt。\n"
+        ":g/模式/norm 按键：对匹配行执行普通模式命令。\n"
+        "文本语法：每行 “状态字母 编号 文件名”。y 改名、n 跳过、d 删除（移入回收站）。\n"
+        "编号是文件身份，改名字时请保留；删掉一整行会报错，删除请把状态改成 d。\n"
+        "文件名可含空格；< > : \" / \\ | ? * 与 CON、NUL 等保留名 Windows 不允许。",
+        "Filters change only what is visible; they never change the execution set.\n\n"
+        "All: every row, including unchanged and blocked rows.\n"
+        "Selected: rows currently checked.\n"
+        "Applicable: rows without errors whose target name changes.\n"
+        "To rename: selected rows that can be executed.\n\n"
+        "Vim in Text mode: when enabled, j/k move between rows, h/l move by character, dd marks a row for deletion, and u restores it.\n"
+        "Pending deletes stay in the list with a pale red background, strike-through text, and an explicit status.\n\n"
+        "Ctrl+Q: select a block; j/k extend rows, I inserts before it, A appends after it, r replaces the characters inside it, Esc repeats the insertion across selected rows.\n"
+        "df, / dt, / dF, / dT,: d takes f F t T as a motion; d; and d, repeat the last find. r in v/V/Ctrl+Q replaces the selected characters.\n"
+        "Ctrl+S: finish insertion and confirm renaming.\n"
+        ":q closes the window (refused while changes are unapplied), :q! discards them and closes.\n"
+        ":%norm A.txt: append .txt to every line.\n"
+        ":g/pattern/norm keys: run Normal commands on matching lines.\n"
+        "Text syntax: each line is \"state id name\". y renames, n skips, d deletes (to the Recycle Bin).\n"
+        "The id is the file's identity: keep it when you edit names. A removed line is an error, so delete with d.\n"
+        "Names may contain spaces; < > : \" / \\ | ? * and reserved names such as CON or NUL are not allowed."));
+    auto* helpDialog = new QDialog(this);
+    helpDialog->setObjectName(QStringLiteral("renameHelpDialog"));
+    helpDialog->setWindowTitle(T("帮助", "Help"));
+    helpDialog->resize(560, 420);
+    auto* helpLayout = new QVBoxLayout(helpDialog);
+    helpLayout->setContentsMargins(16, 16, 16, 16);
+    helpLayout->addWidget(helpBrowser);
+    connect(helpButton, &QToolButton::clicked, this, [this, helpDialog] {
+        m_theme->apply(helpDialog);
+        helpDialog->show();
+        helpDialog->raise();
+        helpDialog->activateWindow();
+    });
+
+    setDockOptions(QMainWindow::DockOptions{});
 
     // ---- input and shortcuts ---------------------------------------------
     connect(m_apply, &QPushButton::clicked, this, &Window::ConfirmAndApply);
@@ -801,13 +962,65 @@ void Window::BuildUi()
             m_bridge->selectAll(checked);
     });
     connect(m_path, &QLineEdit::returnPressed, this, [this] { NavigateTo(m_path->text()); });
+    connect(m_path, &QLineEdit::editingFinished, this, [this] { ShowPathEditor(false); });
     connect(m_up, &QToolButton::clicked, this, &Window::GoUp);
     connect(m_browse, &QToolButton::clicked, this, &Window::BrowseFolder);
     connect(m_reload, &QToolButton::clicked, this, &Window::ReloadFolder);
     connect(m_table, &QTableView::doubleClicked, this, [this](const QModelIndex& index) {
-        if (index.isValid() && m_bridge->rowIsFolder(index.row()))
+        if (!index.isValid())
+            return;
+        if (index.data(rename_qml::PreviewModel::PendingDeleteRole).toBool())
+        {
+            m_bridge->restorePendingDelete(index.data(rename_qml::PreviewModel::IdRole).toString());
+            RefreshAll();
+        }
+        else if (m_bridge->rowIsFolder(index.row()))
             NavigateTo(m_bridge->pathForRow(index.row()));
     });
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QWidget::customContextMenuRequested, this, [this](const QPoint& point) {
+        const QModelIndex index = m_table->indexAt(point);
+        QMenu menu(m_table);
+
+        // Undo lives here rather than only on vim's "u": every model-level change
+        // rewrites the buffer, which invalidates the editor's undo stack. These
+        // items go through the presenter and then re-publish the text.
+        const QString id = index.isValid()
+            ? index.data(rename_qml::PreviewModel::IdRole).toString() : QString();
+        QAction* revertRow = nullptr;
+        QAction* restoreDelete = nullptr;
+        if (!id.isEmpty() && index.data(rename_qml::PreviewModel::PendingDeleteRole).toBool())
+            restoreDelete = menu.addAction(T("取消待删除", "Cancel pending delete"));
+        if (!id.isEmpty())
+            revertRow = menu.addAction(T("恢复此行为原名", "Restore this row's original name"));
+        QAction* revertAll = menu.addAction(T("还原全部未执行的修改", "Undo all unapplied edits"));
+        menu.addSeparator();
+        QAction* browse = index.isValid() && m_bridge->rowIsFolder(index.row())
+            ? menu.addAction(T("打开这个文件夹", "Open this folder")) : nullptr;
+
+        QAction* chosen = menu.exec(m_table->viewport()->mapToGlobal(point));
+        if (!chosen)
+            return;
+        if (chosen == restoreDelete)
+            m_bridge->restorePendingDelete(id);
+        else if (chosen == revertRow)
+            m_bridge->revertRow(id);
+        else if (chosen == revertAll)
+            m_bridge->revertAllEdits();
+        else if (browse && chosen == browse)
+            NavigateTo(m_bridge->pathForRow(index.row()));
+        else
+            return;
+        RefreshAll();
+    });
+    // Small list-only Vim layer. vimcore remains the text editor's state machine;
+    // this only maps the familiar table navigation/deletion gestures to model
+    // operations when the table owns focus.
+    m_table->installEventFilter(this);
+    // A nested dock host does not bubble an editor's unhandled Esc to Window's
+    // keyPressEvent. Watch the editor directly so non-Vim Esc still closes the
+    // plugin while Vim's later-installed filter retains priority when enabled.
+    m_text->installEventFilter(this);
 
     auto* refresh = new QShortcut(QKeySequence(Qt::Key_F5), this);
     refresh->setContext(Qt::WidgetWithChildrenShortcut);
@@ -827,9 +1040,7 @@ void Window::BuildUi()
         ConfirmAndApply();
     });
 
-    auto* ctrlS = new QShortcut(QKeySequence(QStringLiteral("Ctrl+S")), this);
-    ctrlS->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(ctrlS, &QShortcut::activated, this, &Window::ConfirmAndApply);
+    qApp->installEventFilter(this);
 
     // Esc is NOT a QShortcut: shortcut matching runs before key delivery, so it
     // would steal Esc from the vim filter and close the window mid-edit. The
@@ -968,6 +1179,8 @@ void Window::ConnectBridge()
         if (!m_syncing)
             m_textTimer->start();
     });
+    connect(m_text, &QPlainTextEdit::cursorPositionChanged,
+            this, &Window::RefreshCursorPosition);
 
     // ---- vim mode ------------------------------------------------------------
     // The filter is installed once and gated by its own enabled flag; the toggle
@@ -975,9 +1188,12 @@ void Window::ConnectBridge()
     m_vim = new VimTextFilter(m_text, this);
     connect(m_vim, &VimTextFilter::cursorLineChanged, this, &Window::HighlightPreviewRow);
     connect(m_vim, &VimTextFilter::statusChanged, this, [this](const QString& status) {
-        if (m_vimBadge)
-            m_vimBadge->setText(m_vim->enabled() ? status : QString());
+        Q_UNUSED(status);
+        m_vimMessage.clear(); // any key press replaces a transient message
+        RefreshVimStatus();
+        RefreshFooter();
     });
+    connect(m_vim, &VimTextFilter::quitRequested, this, &Window::OnVimQuit);
     connect(m_vimToggle, &QToolButton::toggled, this, [this](bool checked) {
         if (m_syncing)
             return;
@@ -1082,6 +1298,105 @@ void Window::keyPressEvent(QKeyEvent* event)
     QWidget::keyPressEvent(event);
 }
 
+bool Window::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)
+    {
+        auto* target = qobject_cast<QWidget*>(watched);
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (target && target->window() == this && !QApplication::activeModalWidget()
+            && key->key() == Qt::Key_S && key->modifiers() == Qt::ControlModifier)
+        {
+            key->accept();
+            if (event->type() == QEvent::KeyPress && !key->isAutoRepeat())
+                ConfirmAndApply();
+            return true;
+        }
+    }
+    if (watched == m_breadcrumb && event->type() == QEvent::MouseButtonDblClick)
+    {
+        ShowPathEditor(true);
+        return true;
+    }
+    if (watched == m_text && event->type() == QEvent::KeyPress)
+    {
+        const auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Escape && (!m_vim || !m_vim->enabled()))
+        {
+            close();
+            return true;
+        }
+    }
+    if (watched != m_table || event->type() != QEvent::KeyPress || !m_vim
+        || !m_vim->enabled() || !m_table)
+        return QWidget::eventFilter(watched, event);
+
+    auto* key = static_cast<QKeyEvent*>(event);
+    if (key->modifiers() != Qt::NoModifier || key->text().isEmpty())
+        return QWidget::eventFilter(watched, event);
+    const QChar ch = key->text().at(0);
+    const int rows = m_table->model() ? m_table->model()->rowCount() : 0;
+    if (rows <= 0)
+        return QWidget::eventFilter(watched, event);
+
+    const int current = m_table->currentIndex().isValid() ? m_table->currentIndex().row() : 0;
+    const auto selectRow = [this, rows](int row) {
+        const QModelIndex index = m_table->model()->index(qBound(0, row, rows - 1), 0);
+        m_table->selectionModel()->setCurrentIndex(index,
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        m_table->scrollTo(index, QAbstractItemView::EnsureVisible);
+    };
+
+    if (m_listPendingG)
+    {
+        m_listPendingG = false;
+        if (ch == QLatin1Char('g'))
+        {
+            selectRow(0);
+            return true;
+        }
+    }
+    if (m_listPendingD)
+    {
+        m_listPendingD = false;
+        if (ch == QLatin1Char('d'))
+        {
+            const QModelIndex index = m_table->currentIndex();
+            if (index.isValid())
+            {
+                const QString id = index.data(rename_qml::PreviewModel::IdRole).toString();
+                m_bridge->markRowForDelete(id);
+                RefreshAll();
+                selectRow(qMin(current, rows - 2));
+            }
+            return true;
+        }
+    }
+
+    switch (ch.unicode())
+    {
+    case 'j': selectRow(current + 1); return true;
+    case 'k': selectRow(current - 1); return true;
+    case 'G': selectRow(rows - 1); return true;
+    case 'g': m_listPendingG = true; return true;
+    case 'd': m_listPendingD = true; return true;
+    case 'u':
+    {
+        const QModelIndex index = m_table->currentIndex();
+        if (index.isValid()
+            && index.data(rename_qml::PreviewModel::PendingDeleteRole).toBool())
+        {
+            m_bridge->restorePendingDelete(index.data(rename_qml::PreviewModel::IdRole).toString());
+            RefreshAll();
+            selectRow(qMin(current, m_table->model()->rowCount() - 1));
+            return true;
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+    default: return QWidget::eventFilter(watched, event);
+    }
+}
+
 void Window::RefreshVim()
 {
     if (!m_bridge || !m_vimToggle || !m_vim)
@@ -1091,11 +1406,109 @@ void Window::RefreshVim()
     m_vimToggle->setChecked(enabled);
     m_syncing = false;
     m_vim->setEnabled(enabled);
-    m_vimBadge->setVisible(enabled);
-    m_vimBadge->setText(enabled ? m_vim->statusText() : QString());
+    RefreshVimStatus();
+}
+
+void Window::OnVimQuit(bool force)
+{
+    if (!m_bridge)
+        return;
+    // "Unapplied edits" means exactly what the status bar counts as ready to run:
+    // renames to perform and rows marked for deletion.
+    const bool hasPendingEdits = m_bridge->readyCount() > 0 || m_bridge->deleteCount() > 0;
+    if (hasPendingEdits && !force)
+    {
+        // vim's E37: the buffer is "modified", :q will not throw the work away.
+        ShowVimMessage(T("E37: 还有未执行的修改（用 :q! 放弃）",
+                         "E37: pending changes (use :q! to discard them)"));
+        return;
+    }
+    if (hasPendingEdits)
+        m_bridge->revertAllEdits(); // :q! — drop them, then close
+    // Closing from inside a key event would destroy the widget that is still
+    // delivering it, so the close is queued.
+    QMetaObject::invokeMethod(this, [this] { close(); }, Qt::QueuedConnection);
+}
+
+void Window::ShowVimMessage(const QString& message)
+{
+    if (!m_vimCommandLine)
+        return;
+    m_vimMessage = message;
+    RefreshVimStatus();
+    // vim clears its message on the next key press; a timer covers the case where
+    // the next key does not change the mode at all.
+    QTimer::singleShot(4000, this, [this, message] {
+        if (m_vimMessage == message)
+        {
+            m_vimMessage.clear();
+            RefreshVimStatus();
+        }
+    });
+}
+
+void Window::RefreshVimStatus()
+{
+    if (!m_vimToggle || !m_vim || !m_vimCommandLine)
+        return;
+    const bool enabled = m_vim->enabled();
+    // One character per mode, vim-style. The button keeps a fixed width, so
+    // the toolbar never twitches as the letters change.
+    QString modeLetter;
+    QString modeName;
+    if (enabled)
+    {
+        switch (m_vim->mode())
+        {
+        case vimcore::Mode::Insert:      modeLetter = QStringLiteral("I"); modeName = T("插入", "Insert"); break;
+        case vimcore::Mode::Replace:     modeLetter = QStringLiteral("R"); modeName = T("替换", "Replace"); break;
+        case vimcore::Mode::Visual:      modeLetter = QStringLiteral("v"); modeName = T("可视", "Visual"); break;
+        case vimcore::Mode::VisualLine:  modeLetter = QStringLiteral("V"); modeName = T("行可视", "Visual Line"); break;
+        case vimcore::Mode::VisualBlock: modeLetter = QStringLiteral("B"); modeName = T("块可视", "Visual Block"); break;
+        case vimcore::Mode::Normal:      break;
+        }
+        if (modeLetter.isEmpty())
+        {
+            modeLetter = QStringLiteral("N");
+            modeName = T("普通", "Normal");
+        }
+    }
+    m_syncing = true;
+    m_vimToggle->setText(enabled ? modeLetter : QStringLiteral("VIM"));
+    m_syncing = false;
     m_vimToggle->setToolTip(enabled
-        ? T("Vim 按键模式已开启（点此关闭）", "Vim key bindings are on (click to turn off)")
+        ? T("Vim 按键模式已开启（%1）· 点此关闭", "Vim key bindings are on (%1) · click to turn off").arg(modeName)
         : T("Vim 按键模式（默认关闭）", "Vim key bindings (off by default)"));
+
+    // The command line under the editor: the raw status the core asked for,
+    // i.e. the ":" command while one is being typed, "-- NORMAL --" otherwise.
+    // A transient message such as "E37: ..." wins until the next key press.
+    m_vimCommandLine->setVisible(enabled);
+    QString status = m_vim->statusText();
+    if (!m_vimMessage.isEmpty() && !status.startsWith(QLatin1Char(':')))
+        status = m_vimMessage;
+    m_vimCommandLine->setText(status);
+    m_vimCommandLine->setToolTip(status);
+    const bool enteringCommand = status.startsWith(QLatin1Char(':'));
+    m_vimCommandLine->setStyleSheet(enteringCommand
+        ? QStringLiteral("color:%1; font-weight:600; padding-left:7px;")
+              .arg(m_theme ? m_theme->accent.name() : QStringLiteral("#0078d4"))
+        : QStringLiteral("color:%1; padding-left:7px;")
+              .arg(m_theme ? m_theme->faint.name() : QStringLiteral("#808080")));
+}
+
+void Window::RefreshCursorPosition()
+{
+    if (!m_cursorPosition || !m_text || !m_editorTabs)
+        return;
+    const bool textPage = m_editorTabs->currentIndex() == 1;
+    m_cursorPosition->setVisible(textPage);
+    if (!textPage)
+        return;
+    const QTextCursor cursor = m_text->textCursor();
+    m_cursorPosition->setText(QStringLiteral("%1:%2")
+                                  .arg(cursor.blockNumber() + 1)
+                                  .arg(cursor.positionInBlock() + 1));
 }
 
 void Window::RefreshPresets()
@@ -1128,7 +1541,7 @@ void Window::SyncTextEditor()
 {
     if (!m_bridge || !m_text)
         return;
-    if (m_bridge->mode() != QStringLiteral("text") || m_text->hasFocus())
+    if (m_bridge->mode() != QStringLiteral("text"))
         return;
     if (m_text->toPlainText() == m_bridge->buffer())
         return;
@@ -1145,6 +1558,21 @@ void Window::SyncPath()
     if (!m_path || !m_bridge)
         return;
     const QString folder = m_bridge->currentFolder();
+    if (m_breadcrumb && !m_path->isVisible())
+    {
+        while (QLayoutItem* item = m_breadcrumbLayout->takeAt(0))
+        {
+            if (QWidget* widget = item->widget())
+                widget->deleteLater();
+            delete item;
+        }
+        auto* label = new PathLabel(m_breadcrumb);
+        label->path = QDir::toNativeSeparators(folder);
+        label->setAttribute(Qt::WA_TransparentForMouseEvents);
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        m_breadcrumbLayout->addWidget(label, 1);
+        m_breadcrumb->setToolTip(label->path + T("\n双击编辑完整路径", "\nDouble-click to edit the full path"));
+    }
     if (!m_path->hasFocus() && m_path->text() != folder)
     {
         m_path->setText(folder);
@@ -1156,6 +1584,22 @@ void Window::SyncPath()
                      && parent.compare(folder, Qt::CaseInsensitive) != 0);
     m_reload->setEnabled(hasFolder);
     m_path->setToolTip(hasFolder ? folder : T("还没有打开文件夹", "No folder is open"));
+}
+
+void Window::ShowPathEditor(bool show)
+{
+    if (!m_path || !m_breadcrumb)
+        return;
+    m_breadcrumb->setVisible(!show);
+    m_path->setVisible(show);
+    if (show)
+    {
+        m_path->setText(m_bridge ? m_bridge->currentFolder() : QString());
+        m_path->setFocus(Qt::OtherFocusReason);
+        m_path->selectAll();
+    }
+    else
+        SyncPath();
 }
 
 bool Window::ConfirmDiscard()
@@ -1188,6 +1632,8 @@ void Window::NavigateTo(const QString& folder)
         SyncPath();
         return;
     }
+    if (m_table && m_table->selectionModel())
+        m_table->selectionModel()->clearSelection();
     m_bridge->openFolder(info.absoluteFilePath());
     RefreshAll();
 }
@@ -1287,8 +1733,9 @@ void Window::RefreshAll()
 
 void Window::HighlightPreviewRow(int line)
 {
-    // The text buffer is "/<id> name" per line; the preview table is keyed by the
-    // same id, so one lookup connects the line the vim cursor is on to its row.
+    // The text buffer is "<state> <id> <name>" per line; the preview table is
+    // keyed by the same id, so one lookup connects the line the vim cursor is on
+    // to its row.
     m_vimLine = line;
     if (!m_bridge || !m_table || !m_vim || !m_vim->enabled())
         return;
@@ -1298,15 +1745,17 @@ void Window::HighlightPreviewRow(int line)
     const QStringList lines = m_bridge->buffer().split(QLatin1Char('\n'));
     if (line < 0 || line >= lines.size())
         return;
+    // Skip the state letter and the separator, then read the id digits.
     const QString text = lines.at(line);
-    if (!text.startsWith(QLatin1Char('/')))
-        return;
     int i = 1;
+    while (i < text.size() && text.at(i).isSpace())
+        ++i;
+    const int digitsStart = i;
     while (i < text.size() && text.at(i).isDigit())
         ++i;
-    if (i == 1)
+    if (i == digitsStart)
         return;
-    const QString id = text.mid(1, i - 1);
+    const QString id = text.mid(digitsStart, i - digitsStart);
 
     QAbstractItemModel* model = m_bridge->previewModel();
     for (int row = 0; row < model->rowCount(); ++row)
@@ -1325,10 +1774,8 @@ void Window::HighlightPreviewRow(int line)
 void Window::Retranslate()
 {
     setWindowTitle(T("批量重命名", "Batch Rename"));
-    if (m_title)
-        m_title->setText(T("批量重命名", "Batch Rename"));
-    m_modeRules->setText(T("规则", "Rules"));
-    m_modeText->setText(T("文本", "Text"));
+    m_editorTabs->setTabText(0, T("规则", "Rules"));
+    m_editorTabs->setTabText(1, T("文本", "Text"));
 
     m_path->setPlaceholderText(T("文件夹", "Folder"));
     m_up->setText(T("上一级", "Up"));
@@ -1357,7 +1804,7 @@ void Window::Retranslate()
 
     m_find->setPlaceholderText(T("查找", "Find"));
     m_replace->setPlaceholderText(T("替换为", "Replace with"));
-    m_vimToggle->setText(T("Vim", "Vim"));
+    RefreshVimStatus();
     m_regex->setText(T("使用正则表达式", "Use regular expressions"));
     m_matchAll->setText(T("替换全部匹配", "Match all occurrences"));
     m_caseSensitive->setText(T("区分大小写", "Case sensitive"));
@@ -1381,9 +1828,13 @@ void Window::Retranslate()
 void Window::RefreshMode()
 {
     const bool text = m_bridge->mode() == QStringLiteral("text");
-    m_modeRules->setChecked(!text);
-    m_modeText->setChecked(text);
+    if (m_editorTabs)
+    {
+        QSignalBlocker blocker(m_editorTabs);
+        m_editorTabs->setCurrentIndex(text ? 1 : 0);
+    }
     m_leftStack->setCurrentIndex(text ? 1 : 0);
+    RefreshCursorPosition();
 }
 
 void Window::RefreshCounts()
@@ -1404,7 +1855,7 @@ void Window::RefreshCounts()
                             : filter == QStringLiteral("to-rename") ? 3 : 0);
     m_syncing = false;
 
-    m_apply->setText(T("重命名 %1 项", "Rename %1").arg(ready));
+    m_apply->setText(T("重命名", "Rename"));
     m_apply->setEnabled(m_bridge->canExecute());
     m_apply->setVisible(m_bridge->doneLine().isEmpty());
 }
@@ -1448,54 +1899,82 @@ void Window::RefreshFooter()
     const QString done = m_bridge->doneLine();
     const int errors = m_bridge->errorCount();
     const int ready = m_bridge->readyCount();
-    const int unchanged = m_bridge->unchangedCount();
-    const int skipped = m_bridge->skippedCount();
+    const int toDelete = m_bridge->deleteCount();
 
     const QString blocking = m_bridge->blockingReason();
-    const bool blocked = !m_bridge->blockedLine().isEmpty();
-    QColor dot = m_theme->faint;
-    if (!done.isEmpty())
-        dot = m_theme->ok;
-    else if (blocked || errors > 0 || skipped > 0)
-        dot = m_theme->caution;
-    else if (ready > 0)
-        dot = m_theme->ok;
-    m_dot->setStyleSheet(QStringLiteral("background:%1;border-radius:4px;").arg(dot.name()));
 
-    if (!done.isEmpty())
+    const auto badgeStyle = [this](QLabel* badge, const QColor& colour) {
+        if (!badge)
+            return;
+        badge->setStyleSheet(QStringLiteral(
+            "padding:2px 8px; border:1px solid %1; border-radius:5px; "
+            "background:%2; color:%3; font-weight:600;")
+            .arg(QStringLiteral("transparent"), m_theme->layer.name(), colour.name()));
+    };
+    if (m_readyBadge)
     {
-        m_status->setText(done);
+        m_readyBadge->setText(T("%1 项可改", "%1 applicable").arg(ready));
+            badgeStyle(m_readyBadge, ready > 0 ? m_theme->ok : m_theme->subtext);
     }
-    else
+    if (m_conflictBadge)
     {
-        QString line = T("%1 项会改 · %2 项不变", "%1 to rename · %2 unchanged")
-                           .arg(ready)
-                           .arg(unchanged);
-        if (errors > 0)
-            line += T(" · %1 项冲突或有问题", " · %1 blocked").arg(errors);
-        else if (ready > 0)
-            line += T(" · 无冲突", " · no conflicts");
-        if (skipped > 0)
-            line += T(" · %1 项未出现在文本中", " · %1 not in text").arg(skipped);
-        m_status->setText(line);
+        m_conflictBadge->setText(T("%1 个冲突", "%1 conflicts").arg(errors));
+        badgeStyle(m_conflictBadge, errors > 0 ? m_theme->danger : m_theme->subtext);
+    }
+    if (m_deleteBadge)
+    {
+        m_deleteBadge->setText(T("%1 项待删除", "%1 pending delete").arg(toDelete));
+        badgeStyle(m_deleteBadge, toDelete > 0 ? m_theme->danger : m_theme->subtext);
     }
 
     QString hint;
-    if (!blocking.isEmpty())
+    if (!done.isEmpty())
+        hint = done.section(QLatin1Char('\n'), 0, 0);
+    else if (!blocking.isEmpty())
         hint = blocking;
+    else if (m_vim && m_vim->enabled())
+    {
+        // The mode itself shows in the status-bar chip; keep the footer for
+        // key hints and leave the status-bar middle available for counts.
+        hint = T("i 插入 · v 可视 · : 命令 · Ctrl+S 执行",
+                 "i insert · v visual · : command · Ctrl+S run");
+    }
     else if (ready > 0)
         hint = T("Enter 执行 · 可撤销", "Enter runs · undoable");
     else
-        hint = T("添加规则或载入预设", "Add a rule or load a preset");
+        hint = T("? 查看帮助", "? for help");
     m_hint->setText(hint);
-    m_hint->setToolTip(hint);
-    m_status->setStyleSheet(QStringLiteral("color:%1;").arg(m_theme->subtext.name()));
+    m_hint->setToolTip(done.isEmpty() ? hint : done);
     m_hint->setStyleSheet(QStringLiteral("color:%1;")
                               .arg((blocking.isEmpty() ? m_theme->faint : m_theme->danger).name()));
+
 }
 
 void Window::ApplyAppearance()
 {
+    static const int iconFont = QFontDatabase::addApplicationFont(QStringLiteral(":/resources/icons/Phosphor.ttf"));
+    const QStringList families = QFontDatabase::applicationFontFamilies(iconFont);
+    if (!families.isEmpty())
+    {
+        QFont font(families.front());
+        font.setPixelSize(18);
+        font.setStyleStrategy(QFont::NoFontMerging);
+        for (auto* button : findChildren<QAbstractButton*>())
+        {
+            if (!button->property("phGlyph").isValid()) continue;
+            QPixmap image(36, 36);
+            image.setDevicePixelRatio(2);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            painter.setFont(font);
+            painter.setPen(m_theme->text);
+            painter.drawText(QRect(0, 0, 18, 18), Qt::AlignCenter,
+                             QString(QChar(button->property("phGlyph").toUInt())));
+            painter.end();
+            button->setIcon(QIcon(image));
+            button->setIconSize(QSize(18, 18));
+        }
+    }
     if (!m_bridge || !m_theme)
         return;
 
@@ -1505,13 +1984,33 @@ void Window::ApplyAppearance()
     m_theme->apply(this);
 
     setWindowTitle(T("批量重命名", "Batch Rename"));
+    if (m_vimToggle)
+    {
+        // "VIM" and a single mode letter must both fit: size to the measured text
+        // rather than a hard-coded width, which elided the uppercase label to "...".
+        const int textWidth = m_vimToggle->fontMetrics().horizontalAdvance(QStringLiteral("VIM"));
+        m_vimToggle->setFixedWidth(qMax(40, textWidth + 22));
+    }
     m_table->verticalHeader()->setDefaultSectionSize(m_theme->rowHeight);
     m_table->setColumnWidth(0, 34);
+    m_table->setColumnWidth(3, 78);
     QPalette tablePalette = m_table->palette();
     tablePalette.setColor(QPalette::Highlight, m_theme->selection);
     tablePalette.setColor(QPalette::HighlightedText, m_theme->text);
     m_table->setPalette(tablePalette);
     m_bridge->previewModel()->setBaseFont(m_theme->font);
+    if (m_text)
+    {
+        QPalette editorPalette = m_text->palette();
+        editorPalette.setColor(QPalette::Highlight, m_theme->textSelection);
+        editorPalette.setColor(QPalette::HighlightedText, m_theme->text);
+        m_text->setPalette(editorPalette);
+        m_text->setStyleSheet(QStringLiteral(
+            "QPlainTextEdit#renameTextEditor { background:%1; color:%2; "
+            "border:0; selection-background-color:%3; selection-color:%4; }")
+            .arg(m_theme->layer.name(), m_theme->text.name(),
+                 m_theme->textSelection.name(QColor::HexArgb), m_theme->text.name()));
+    }
     if (m_scope)
         m_scope->view()->setFont(m_theme->font);
     if (m_filter)
@@ -1539,6 +2038,8 @@ void Window::ConfirmAndApply()
         return;
 
     // A click can arrive before the debounce has pushed the last keystroke.
+    if (m_vim)
+        m_vim->finishEdit();
     if (m_ruleTimer)
         m_ruleTimer->stop();
     if (m_textTimer)
@@ -1554,18 +2055,18 @@ void Window::ConfirmAndApply()
     const int ready = m_bridge->readyCount();
     const int unchanged = m_bridge->unchangedCount();
     const int errors = m_bridge->errorCount();
-    const int skipped = m_bridge->skippedCount();
+    const int toDelete = m_bridge->deleteCount();
 
     QString text = T("将重命名 %1 项。", "Rename %1 item(s).").arg(ready);
     if (unchanged > 0)
         text += T("\n%1 项不变。", "\n%1 unchanged.").arg(unchanged);
-    if (skipped > 0)
-        text += T("\n%1 项未出现在文本中，保持不变。", "\n%1 item(s) are not in the text and stay unchanged.").arg(skipped);
+    if (toDelete > 0)
+        text += T("\n将删除 %1 项（移至回收站）。", "\nDelete %1 item(s) (move to Recycle Bin).").arg(toDelete);
     if (errors > 0)
         text += T("\n%1 项冲突或有问题，不会执行。", "\n%1 item(s) blocked and will not run.").arg(errors);
     text += T("\n\n确定执行吗？", "\n\nRun it now?");
 
-    if (!Ask(text, T("重命名", "Rename")))
+    if (!Ask(text, toDelete > 0 ? T("执行", "Run") : T("重命名", "Rename")))
         return;
 
     m_bridge->apply();
@@ -1584,7 +2085,8 @@ bool Window::Ask(const QString& text, const QString& acceptText)
         m_theme->apply(&box);
     QAbstractButton* accept = box.addButton(acceptText, QMessageBox::AcceptRole);
     QAbstractButton* cancel = box.addButton(T("取消", "Cancel"), QMessageBox::RejectRole);
-    box.setDefaultButton(qobject_cast<QPushButton*>(cancel));
+    box.setDefaultButton(qobject_cast<QPushButton*>(accept));
+    box.setEscapeButton(cancel);
     box.exec();
     m_asking = false;
     return box.clickedButton() == accept;

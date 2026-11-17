@@ -70,7 +70,7 @@ int PreviewModel::rowCount(const QModelIndex& parent) const
 
 int PreviewModel::columnCount(const QModelIndex& parent) const
 {
-    return parent.isValid() ? 0 : 3;
+    return parent.isValid() ? 0 : 4;
 }
 
 void PreviewModel::setColors(const QColor& text, const QColor& subtext,
@@ -81,7 +81,7 @@ void PreviewModel::setColors(const QColor& text, const QColor& subtext,
     m_faint = faint;
     m_danger = danger;
     if (!m_rows.empty())
-        emit dataChanged(index(0, 0), index(static_cast<int>(m_rows.size()) - 1, 2));
+        emit dataChanged(index(0, 0), index(static_cast<int>(m_rows.size()) - 1, 3));
 }
 
 QString PreviewModel::targetText(const rename_ui::Row& row) const
@@ -128,7 +128,7 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
     case IsFolderRole: return row.isFolder;
     case DepthRole:    return static_cast<int>(row.depth);
     case NoteRole:     return ToQt(row.note);
-    case SkippedRole:  return row.skipped;
+    case PendingDeleteRole: return row.pendingDelete;
 
     case Qt::CheckStateRole:
         return index.column() == 0 ? (row.selected ? Qt::Checked : Qt::Unchecked) : QVariant();
@@ -137,10 +137,31 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
             return QString();
         if (index.column() == 1)
             return ToQt(row.originalLeaf);
-        if (row.skipped)
+        if (index.column() == 2 && row.pendingDelete)
             return m_locale.startsWith(QLatin1String("zh"))
-                ? QStringLiteral("未在文本中，保持不变") : QStringLiteral("not in text; unchanged");
-        return targetText(row);
+                ? QStringLiteral("待删除（移至回收站）") : QStringLiteral("pending delete (Recycle Bin)");
+        if (index.column() == 2)
+            return targetText(row);
+        if (index.column() == 3)
+        {
+            // An unchecked row is outside the batch; saying so is clearer than
+            // showing a status the user cannot act on without checking it first.
+            if (!row.selected)
+                return m_locale.startsWith(QLatin1String("zh"))
+                    ? QStringLiteral("未选") : QStringLiteral("Not selected");
+            if (row.pendingDelete)
+                return m_locale.startsWith(QLatin1String("zh"))
+                    ? QStringLiteral("待删除") : QStringLiteral("Pending delete");
+            if (error)
+                return m_locale.startsWith(QLatin1String("zh"))
+                    ? QStringLiteral("有问题") : QStringLiteral("Blocked");
+            if (row.status == rename_core::Status::Ready)
+                return m_locale.startsWith(QLatin1String("zh"))
+                    ? QStringLiteral("可改") : QStringLiteral("Ready");
+            return m_locale.startsWith(QLatin1String("zh"))
+                ? QStringLiteral("不变") : QStringLiteral("Unchanged");
+        }
+        return QVariant();
     case Qt::DecorationRole:
         if (index.column() == 1 && QApplication::style())
             return QApplication::style()->standardIcon(row.isFolder ? QStyle::SP_DirIcon
@@ -151,14 +172,26 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
         {
             if (error)
                 return m_danger;
-            if (row.skipped)
-                return m_subtext;
+            if (row.pendingDelete)
+                return m_danger;
             return row.status == rename_core::Status::Unchanged ? m_faint : m_text;
         }
         if (index.column() == 1)
             return error ? m_faint : m_text;
         return QVariant();
+    case Qt::BackgroundRole:
+        if (row.pendingDelete)
+            return QColor(m_danger.red(), m_danger.green(), m_danger.blue(), 28);
+        return QVariant();
     case Qt::FontRole:
+        if (row.pendingDelete)
+        {
+            QFont font = m_baseFont;
+            if (font.family().isEmpty())
+                font = QApplication::font();
+            font.setStrikeOut(true);
+            return font;
+        }
         if (index.column() == 2 && row.status == rename_core::Status::Ready)
         {
             QFont font = m_baseFont;
@@ -220,7 +253,7 @@ QHash<int, QByteArray> PreviewModel::roleNames() const
         {IsFolderRole, "isFolder"},
         {DepthRole, "depth"},
         {NoteRole, "note"},
-        {SkippedRole, "skipped"},
+        {PendingDeleteRole, "pendingDelete"},
     };
 }
 
@@ -364,6 +397,9 @@ Bridge::Bridge(QObject* parent) : QObject(parent)
     connect(&m_previewModel, &PreviewModel::selectionChanged, this,
             [this](const QString& id, bool selected) {
                 m_presenter.SetRowSelected(id.toStdString(), selected);
+                if (m_presenter.CurrentMode() == rename_ui::Mode::Text)
+                    emit changed(); // SyncTextEditor() reprojects / versus //
+                PublishRows();
                 emit countsChanged();
                 emit changed();
             });
@@ -466,7 +502,7 @@ QString Bridge::blockingReason() const
 
 int Bridge::readyCount() const { return m_presenter.CurrentCounts().ready; }
 int Bridge::unchangedCount() const { return m_presenter.CurrentCounts().unchanged; }
-int Bridge::skippedCount() const { return m_presenter.CurrentCounts().skipped; }
+int Bridge::deleteCount() const { return m_presenter.CurrentCounts().toDelete; }
 int Bridge::errorCount() const { return m_presenter.CurrentCounts().errors; }
 bool Bridge::canExecute() const { return m_presenter.CanExecute(); }
 int Bridge::visibleCount() const { return static_cast<int>(m_presenter.VisibleRows().size()); }
@@ -698,7 +734,7 @@ void Bridge::setFolder(const QString& folder, bool recursive)
         items.push_back(std::move(snapshot));
     }
 
-    m_presenter.SetItems(std::move(items));
+    m_presenter.ReplaceItems(std::move(items));
     m_folder = folder;
     PublishRows();
     emit changed();
@@ -769,6 +805,69 @@ void Bridge::toggleRow(const QString& id, bool selected)
     PublishRows();
     emit countsChanged();
     emit changed();
+}
+
+void Bridge::markRowForDelete(const QString& id)
+{
+    if (m_presenter.CurrentMode() != rename_ui::Mode::Text)
+        return;
+
+    // "dd" rewrites the row's state letter to "d" instead of removing the line:
+    // the delete stays visible in the text, so it can be undone with "u", with the
+    // table's context menu, or by typing "y" back over it.
+    const QStringList lines = buffer().split(QLatin1Char('\n'));
+    const QString marker = QLatin1Char(' ') + id + QLatin1Char(' ');
+    QStringList updated;
+    bool marked = false;
+    for (const QString& line : lines)
+    {
+        if (!marked && line.size() > 2 && line.at(1).isSpace() && line.mid(1).startsWith(marker))
+        {
+            updated.push_back(QLatin1Char('d') + line.mid(1));
+            marked = true;
+            continue;
+        }
+        updated.push_back(line);
+    }
+    if (!marked)
+        return;
+    m_presenter.SetBuffer(FromQt(updated.join(QLatin1Char('\n'))));
+    PublishRows();
+    emit changed();
+    emit countsChanged();
+}
+
+bool Bridge::revertRow(const QString& id)
+{
+    const bool reverted = m_presenter.RevertRow(id.toStdString());
+    if (!reverted)
+        return false;
+    PublishRows();
+    emit changed();
+    emit countsChanged();
+    return true;
+}
+
+bool Bridge::revertAllEdits()
+{
+    const bool reverted = m_presenter.RevertAllEdits();
+    if (!reverted)
+        return false;
+    PublishRows();
+    emit changed();
+    emit countsChanged();
+    return true;
+}
+
+bool Bridge::restorePendingDelete(const QString& id)
+{
+    const bool restored = m_presenter.RestorePendingDelete(id.toStdString());
+    if (!restored)
+        return false;
+    PublishRows();
+    emit changed();
+    emit countsChanged();
+    return true;
 }
 
 void Bridge::selectAll(bool selected)
@@ -1197,7 +1296,9 @@ bool Bridge::apply()
     {
         std::string id;
         std::wstring leaf;
+        QString originalPath;
         QString expectedPath;
+        bool deleteItem = false;
     };
     std::vector<Applied> applied;
 
@@ -1218,14 +1319,18 @@ bool Bridge::apply()
         rename_win::ExecuteItem item;
         item.fullPath = collected->fullPath;
         item.targetLeaf = row.targetLeaf;
+        item.deleteItem = row.pendingDelete;
         item.isFolder = row.isFolder;
         item.depth = row.depth;
         batch.push_back(item);
 
         const QString original = QString::fromStdWString(collected->fullPath);
         const QString parent = QFileInfo(original).absolutePath();
-        applied.push_back({row.id, row.targetLeaf,
-                           QDir::cleanPath(parent + QLatin1Char('/') + QString::fromStdWString(row.targetLeaf))});
+        applied.push_back({row.id, row.targetLeaf, QDir::cleanPath(original),
+                           row.pendingDelete ? QString()
+                                             : QDir::cleanPath(parent + QLatin1Char('/')
+                                                                + QString::fromStdWString(row.targetLeaf)),
+                           row.pendingDelete});
     }
 
     if (batch.empty())
@@ -1234,11 +1339,7 @@ bool Bridge::apply()
     const rename_win::ExecuteResult result = rename_win::Execute(batch, m_dataDir);
 
     int renamed = 0;
-    for (const rename_win::ExecuteResultItem& item : result.items)
-    {
-        if (item.outcome == rename_win::ExecuteOutcome::Renamed)
-            ++renamed;
-    }
+    int deleted = 0;
 
     // Only rows that really renamed get their new name folded into the model;
     // folding a failed one would make a second attempt target the wrong name.
@@ -1247,36 +1348,76 @@ bool Bridge::apply()
     // path. The old suffix comparison could confuse two folders with the same
     // leaf name.
     std::vector<std::pair<std::string, std::wstring>> successful;
+    std::vector<std::string> deletedIds;
+    QStringList failureDetails;
     for (const rename_win::ExecuteResultItem& item : result.items)
     {
         if (item.outcome != rename_win::ExecuteOutcome::Renamed)
+        {
+            if (!item.detail.empty())
+                failureDetails.push_back(ToQt(item.detail));
             continue;
+        }
 
         const QString actual = QDir::cleanPath(QString::fromStdWString(item.targetPath));
         for (const Applied& appliedItem : applied)
         {
-            if (QString::compare(actual, appliedItem.expectedPath, Qt::CaseInsensitive) == 0)
+            if (appliedItem.deleteItem
+                && QString::compare(QDir::cleanPath(QString::fromStdWString(item.originalPath)),
+                                    appliedItem.originalPath, Qt::CaseInsensitive) == 0)
+            {
+                deletedIds.push_back(appliedItem.id);
+                ++deleted;
+                break;
+            }
+            if (!appliedItem.deleteItem
+                && QString::compare(actual, appliedItem.expectedPath, Qt::CaseInsensitive) == 0)
             {
                 successful.emplace_back(appliedItem.id, appliedItem.leaf);
+                ++renamed;
                 break;
             }
         }
     }
 
-    m_presenter.ApplyExecutedResults(successful);
+    m_presenter.ApplyExecutedResults(successful, deletedIds);
+    // Keep the execution source map in sync with the visible completed list so a
+    // second batch resolves the renamed file at its current path.
+    for (const auto& [id, leaf] : successful)
+    {
+        for (rename_win::CollectedItem& entry : m_collected)
+        {
+            if (entry.id == id)
+            {
+                entry.leaf = leaf;
+                const QString parent = QFileInfo(QString::fromStdWString(entry.fullPath)).absolutePath();
+                entry.fullPath = FromQt(QDir::cleanPath(parent + QLatin1Char('/')
+                                                        + QString::fromStdWString(leaf)));
+                break;
+            }
+        }
+    }
+    m_collected.erase(std::remove_if(m_collected.begin(), m_collected.end(),
+                                    [&](const rename_win::CollectedItem& entry) {
+                                        return std::find(deletedIds.begin(), deletedIds.end(), entry.id)
+                                            != deletedIds.end();
+                                    }),
+                      m_collected.end());
 
     // The batch is over; the table is empty now, so say what happened instead of
     // letting the empty state claim no files were ever selected.
-    const int problems = static_cast<int>(result.items.size()) - renamed;
+    const int problems = static_cast<int>(result.items.size()) - renamed - deleted;
     m_blockedLine.clear();
     m_doneLine = m_locale.startsWith(QLatin1String("zh"))
-        ? QStringLiteral("已重命名 %1 项%2").arg(renamed)
+        ? QStringLiteral("已重命名 %1 项，已删除 %2 项%3").arg(renamed).arg(deleted)
               .arg(problems > 0 ? QStringLiteral("，%1 项未成功").arg(problems) : QString())
-        : QStringLiteral("Renamed %1 item(s)%2").arg(renamed)
+        : QStringLiteral("Renamed %1 item(s), deleted %2 item(s)%3").arg(renamed).arg(deleted)
               .arg(problems > 0 ? QStringLiteral(", %1 not done").arg(problems) : QString());
+    if (!failureDetails.empty())
+        m_doneLine += QLatin1Char('\n') + failureDetails.join(QStringLiteral("；"));
 
     PublishRows();
-    emit executed(renamed, ToQt(result.batchJournalPath));
+    emit executed(renamed + deleted, ToQt(result.batchJournalPath));
     emit changed();
     emit countsChanged();
     return true;

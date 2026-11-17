@@ -550,6 +550,24 @@ int main()
         Check(Exists(root + L"\\solo_final.txt"), "LS-S8-04 the new name is on disk");
     }
 
+    // ---- case 9: explicit delete uses Shell + Recycle Bin --------------------
+    {
+        const std::wstring source = root + L"\\delete-me.txt";
+        CreateFileWithText(source);
+
+        rename_win::ExecuteItem remove;
+        remove.fullPath = source;
+        remove.deleteItem = true;
+        const rename_win::ExecuteResult done = rename_win::Execute({remove}, root);
+        bool wasDeleted = false;
+        for (const rename_win::ExecuteResultItem& result : done.items)
+            if (result.outcome == rename_win::ExecuteOutcome::Renamed)
+                wasDeleted = true;
+        Check(wasDeleted, "delete item completed through IFileOperation");
+        Check(!Exists(source), "delete item no longer exists at its original path");
+        Check(done.undoAvailable, "delete requested a Shell undo record");
+    }
+
     RemoveTree(root);
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
 

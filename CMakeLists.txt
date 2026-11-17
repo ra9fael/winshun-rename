@@ -185,6 +185,7 @@ if(RENAME_BUILD_QT)
         BASE "${CMAKE_SOURCE_DIR}"
         FILES
             resources/icons/app-16.png
+            resources/icons/Phosphor.ttf
             resources/icons/app-256.png
     )
     if(MSVC)

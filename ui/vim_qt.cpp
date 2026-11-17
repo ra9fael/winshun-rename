@@ -2,6 +2,8 @@
 #include "ui/vim_qt.h"
 
 #include <QKeyEvent>
+#include <QGuiApplication>
+#include <QInputMethod>
 #include <QPalette>
 #include <QPlainTextEdit>
 #include <QTextBlock>
@@ -102,6 +104,8 @@ void QtDocument::setCursor(vimcore::Cursor cursor)
 
 void QtDocument::setSelection(const vimcore::Selection& selection)
 {
+    m_selection = selection;
+    if (selection.blockWise) return;
     if (!selection.active)
         return; // Normal mode: the core's setCursor already placed the caret
 
@@ -175,6 +179,7 @@ VimTextFilter::VimTextFilter(QPlainTextEdit* editor, QObject* parent)
     // The filter is installed permanently and gated by m_enabled: installing it
     // only when vim mode turns on would miss the first key press after the toggle.
     editor->installEventFilter(this);
+    editor->viewport()->installEventFilter(this);
     m_savedCursorWidth = std::max(editor->cursorWidth(), 1);
 
     connect(editor, &QPlainTextEdit::textChanged, this, [this] {
@@ -206,6 +211,7 @@ void VimTextFilter::setEnabled(bool enabled)
     {
         if (m_enabled && m_editor)
             emit statusChanged(statusText());
+        applyModeUi();
         return;
     }
     m_enabled = enabled;
@@ -214,7 +220,9 @@ void VimTextFilter::setEnabled(bool enabled)
     else
     {
         emit statusChanged(QString());
-        emit modeChanged(false, false);
+        // Leaving vim mode must hand the input method back: the previous mode may
+        // have been Normal (IME off) and the widget has to accept typing again.
+        applyModeUi();
     }
     updateBlockCaret();
 }
@@ -234,6 +242,12 @@ void VimTextFilter::resync()
 QString VimTextFilter::statusText() const
 {
     return m_editor ? m_document->status() : QString();
+}
+
+void VimTextFilter::finishEdit()
+{
+    if (m_enabled && m_editor && (insertMode() || replaceMode()))
+        feed(vimcore::makeKey(vimcore::KeyName::Esc));
 }
 
 bool VimTextFilter::insertMode() const
@@ -258,19 +272,38 @@ void VimTextFilter::feed(const vimcore::Key& key)
         emit statusChanged(status);
         applyModeUi();
     }
+    // ":q" / ":q!" reach the window through this signal; the core cannot close
+    // anything itself.
+    if (const vimcore::QuitRequest request = m_editor->takeQuitRequest();
+        request != vimcore::QuitRequest::None)
+        emit quitRequested(request == vimcore::QuitRequest::Force);
     updateBlockCaret();
 }
 
 void VimTextFilter::applyModeUi()
 {
-    if (!m_editor)
-        return;
-    const bool insert = insertMode();
-    const bool replace = replaceMode();
-    // Replace mode is core-driven, so nothing may reach the widget as text: that
-    // also means the input method must stay out of the way.
+    // Only Insert accepts text from the input method. Every other mode is driven
+    // by vim keys, so a composing IME (Chinese, Japanese, ...) must not be able
+    // to commit anything into the widget: it would bypass the state machine and
+    // appear in Normal mode as plain typing.
+    const bool insert = m_enabled && insertMode();
+    const bool replace = m_enabled && replaceMode();
+    // With vim off the widget is an ordinary editor and keeps its input method;
+    // with vim on only Insert accepts text from it.
+    const bool acceptIme = !m_enabled || insert;
     if (m_edit)
-        m_edit->setAttribute(Qt::WA_InputMethodEnabled, m_enabled && !replace);
+        m_edit->setAttribute(Qt::WA_InputMethodEnabled, acceptIme);
+    // The attribute alone does not detach an input context that is already
+    // attached (which is exactly the case when the user switches to Normal mode
+    // while a Chinese IME is active). reset() drops the half-typed composition
+    // without committing it, update() asks the platform plugin to re-read
+    // ImEnabled and enable/disable the context accordingly.
+    if (QInputMethod* inputMethod = QGuiApplication::inputMethod())
+    {
+        if (!acceptIme)
+            inputMethod->reset();
+        inputMethod->update(Qt::ImEnabled);
+    }
     emit modeChanged(insert, replace);
 }
 
@@ -316,14 +349,41 @@ void VimTextFilter::updateBlockCaret()
         return;
     }
 
+    const auto block = m_document->selection();
+    if (m_editor->mode() == vimcore::Mode::VisualBlock)
+    {
+        QList<QTextEdit::ExtraSelection> ranges;
+        for (auto line = std::min(block.anchor.line, block.head.line);
+             line <= std::max(block.anchor.line, block.head.line); ++line)
+        {
+            QTextEdit::ExtraSelection range;
+            range.cursor = QTextCursor(m_edit->document());
+            range.cursor.setPosition(positionOf(m_edit, {line, std::min(block.anchor.col, block.head.col)}));
+            range.cursor.setPosition(positionOf(m_edit, {line, std::max(block.anchor.col, block.head.col) + 1}), QTextCursor::KeepAnchor);
+            range.format.setBackground(m_edit->palette().color(QPalette::Highlight));
+            range.format.setForeground(m_edit->palette().color(QPalette::HighlightedText));
+            ranges.append(range);
+        }
+        m_edit->setExtraSelections(ranges);
+        m_edit->setCursorWidth(m_savedCursorWidth);
+        m_blockCaret = true;
+        return;
+    }
+    if (m_editor->mode() == vimcore::Mode::Visual || m_editor->mode() == vimcore::Mode::VisualLine)
+    {
+        m_edit->setExtraSelections({});
+        m_edit->setCursorWidth(m_savedCursorWidth);
+        m_blockCaret = false;
+        return;
+    }
     QTextEdit::ExtraSelection selection;
     selection.cursor = m_edit->textCursor();
     QTextCharFormat format;
     // Invert the character cell: the block takes the text colour and the glyph
     // takes the background, which is what a terminal vim cursor looks like.
     const QPalette palette = m_edit->palette();
-    const QColor fill = palette.color(QPalette::Text);
-    const QColor glyph = palette.color(QPalette::Base);
+    const QColor fill = palette.color(QPalette::Highlight);
+    const QColor glyph = palette.color(QPalette::HighlightedText);
     format.setBackground(fill);
     format.setForeground(glyph);
     if (selection.cursor.atBlockEnd())
@@ -342,7 +402,9 @@ void VimTextFilter::updateBlockCaret()
 
 bool VimTextFilter::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched != m_edit || !m_enabled || !m_editor)
+    if (watched != m_edit && (!m_edit || watched != m_edit->viewport()))
+        return QObject::eventFilter(watched, event);
+    if (!m_enabled || !m_editor)
         return QObject::eventFilter(watched, event);
 
     if (event->type() == QEvent::Resize)
@@ -351,9 +413,45 @@ bool VimTextFilter::eventFilter(QObject* watched, QEvent* event)
         updateBlockCaret();
         return QObject::eventFilter(watched, event);
     }
+    // Belt and braces for the input method: even if a platform plugin keeps an
+    // IME attached outside Insert mode, its commits and composition events stop
+    // here. Only the buffer would change, never the vim state machine.
+    if (event->type() == QEvent::InputMethod && !insertMode())
+        return true;
     if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)
     {
         updateBlockCaret();
+        return QObject::eventFilter(watched, event);
+    }
+    if (event->type() == QEvent::MouseButtonRelease)
+    {
+        // The native editor may leave a selection or a stale block cursor when
+        // the user clicks the whitespace after a line.  Normalize the click to
+        // the actual QTextCursor position immediately, then rebuild vim from
+        // that position.  This keeps the highlighted line, the core cursor and
+        // the next j/k command on the same line.
+        auto* mouse = static_cast<QMouseEvent*>(event);
+        const QPoint clickPosition = mouse->position().toPoint();
+        if (m_edit && mouse->button() == Qt::LeftButton)
+        {
+            QTextCursor caret = m_edit->textCursor();
+            caret.clearSelection();
+            m_edit->setTextCursor(caret);
+        }
+        if (m_edit)
+        {
+            QMetaObject::invokeMethod(this, [this, clickPosition] {
+                if (!m_enabled || !m_edit)
+                    return;
+                // Resolve the same point after QPlainTextEdit has processed the
+                // mouse event. This is important for whitespace and clicks below
+                // the last glyph: textCursor() can still describe the old line.
+                QTextCursor caret = m_edit->cursorForPosition(clickPosition);
+                caret.clearSelection();
+                m_edit->setTextCursor(caret);
+                resync();
+            }, Qt::QueuedConnection);
+        }
         return QObject::eventFilter(watched, event);
     }
 
@@ -385,6 +483,10 @@ bool VimTextFilter::eventFilter(QObject* watched, QEvent* event)
     {
         switch (key->key())
         {
+        case Qt::Key_Q:
+        case Qt::Key_V:
+            feed(vimcore::Key{vimcore::KeyName::Char, L'q', 1, true});
+            return true;
         case Qt::Key_R: // redo
             feed(vimcore::Key{vimcore::KeyName::Char, L'R', 1, true});
             return true;

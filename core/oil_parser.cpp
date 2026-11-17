@@ -1,15 +1,21 @@
 // oil_parser.cpp — parse the text buffer into per-line records (design §3.8).
 //
-// The anchor is the whole point (RNF-27). In plain text, changing "a.txt" to
-// "b.txt" is byte-for-byte identical to deleting one line and adding another;
-// the "/<id> " prefix is the only way to say "the same object, new name".
+// The number is the anchor, and it is the whole point (RNF-27): in plain text,
+// changing "a.txt" to "b.txt" is byte-for-byte identical to deleting one line and
+// adding another, so only a stable id can say "the same object, new name".
 //
-// A line without an anchor is therefore a *create*, which release one refuses
-// (RN-FR-19). An unparseable anchor is an error on that line only — the rest of
-// the buffer still parses, because one typo must not hide the other 40 rows.
+// The first column is the row's fate: `y` rename, `n` skip, `d` delete. It is a
+// letter rather than a symbol so both states are visible and survive editors that
+// trim leading whitespace; the id comes second because identity must not depend on
+// position — inserting or removing a line never renumbers the others.
+//
+// A line without an id is therefore a *create*, which release one refuses
+// (RN-FR-19). An unparseable line is an error on that line only — the rest of the
+// buffer still parses, because one typo must not hide the other 40 rows.
 #include "core/rename_core.h"
 
 #include <cwctype>
+#include <string>
 
 namespace rename_core {
 
@@ -27,7 +33,26 @@ OilError MakeError(std::size_t line, OilErrorKind kind, std::wstring_view text)
     return error;
 }
 
+bool IsAsciiLetter(wchar_t ch)
+{
+    return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z');
+}
+
+// "<letter> <id> <name>": the state letter is case-insensitive, the separator is
+// any run of whitespace, and the name is everything after the id.
+std::optional<OilState> StateFromLetter(wchar_t ch)
+{
+    switch (ch)
+    {
+    case L'y': case L'Y': return OilState::Rename;
+    case L'n': case L'N': return OilState::Skip;
+    case L'd': case L'D': return OilState::Delete;
+    default: return std::nullopt;
+    }
+}
+
 } // namespace
+
 OilParseResult ParseOilBuffer(std::wstring_view buffer,
                               const std::vector<OilEntry>& idTable)
 {
@@ -45,9 +70,6 @@ OilParseResult ParseOilBuffer(std::wstring_view buffer,
         // Tolerate CRLF input: the buffer is user-editable and may be pasted.
         if (!line.empty() && line.back() == L'\r')
             line.remove_suffix(1);
-
-        OilLine parsed;
-        parsed.line = lineNumber;
 
         // Blank lines carry no entry and are not an error; they are how a user
         // separates groups visually.
@@ -68,27 +90,36 @@ OilParseResult ParseOilBuffer(std::wstring_view buffer,
             continue;
         }
 
-        // Skip visual indentation: it is presentation only (RNF-36).
-        std::size_t cursor = 0;
-        while (cursor < line.size() && std::iswspace(static_cast<wint_t>(line[cursor])) != 0)
-            ++cursor;
-
-        if (cursor >= line.size() || line[cursor] != L'/')
+        // The state letter must be the very first character: leading whitespace
+        // is no longer "visual indentation", because it would be indistinguishable
+        // from a state column.
+        const std::optional<OilState> state = StateFromLetter(line.front());
+        if (!state)
         {
-            out.errors.push_back(MakeError(lineNumber, OilErrorKind::NoAnchor, line));
+            out.errors.push_back(MakeError(lineNumber,
+                                           IsAsciiLetter(line.front())
+                                               ? OilErrorKind::UnknownState
+                                               : OilErrorKind::NoAnchor,
+                                           line));
             if (newline == std::wstring_view::npos)
                 break;
             pos = newline + 1;
             continue;
         }
 
-        // "/<digits><space><leaf>"
-        ++cursor;
+        std::size_t cursor = 1;
+        while (cursor < line.size() && std::iswspace(static_cast<wint_t>(line[cursor])) != 0)
+            ++cursor;
+
         const std::size_t digitsStart = cursor;
         while (cursor < line.size() && std::iswdigit(static_cast<wint_t>(line[cursor])) != 0)
             ++cursor;
 
-        if (cursor == digitsStart)
+        // No digits at all, or digits glued to the name ("y 1a.txt"): the id is
+        // malformed either way, and guessing would attach the rename to the wrong
+        // file.
+        if (cursor == digitsStart
+            || (cursor < line.size() && std::iswspace(static_cast<wint_t>(line[cursor])) == 0))
         {
             out.errors.push_back(MakeError(lineNumber, OilErrorKind::MalformedAnchor, line));
             if (newline == std::wstring_view::npos)
@@ -97,20 +128,33 @@ OilParseResult ParseOilBuffer(std::wstring_view buffer,
             continue;
         }
 
-        const long long id = std::stoll(std::wstring(line.substr(digitsStart, cursor - digitsStart)));
-        if (cursor < line.size() && std::iswspace(static_cast<wint_t>(line[cursor])) != 0)
+        long long id = 0;
+        try
+        {
+            id = std::stoll(std::wstring(line.substr(digitsStart, cursor - digitsStart)));
+        }
+        catch (const std::exception&)
+        {
+            // std::stoll throws on overflow; an id that large is never real.
+            out.errors.push_back(MakeError(lineNumber, OilErrorKind::MalformedAnchor, line));
+            if (newline == std::wstring_view::npos)
+                break;
+            pos = newline + 1;
+            continue;
+        }
+
+        while (cursor < line.size() && std::iswspace(static_cast<wint_t>(line[cursor])) != 0)
             ++cursor;
 
-        std::wstring_view leaf = line.substr(cursor);
+        const std::wstring_view leaf = line.substr(cursor);
 
         // Order matters here, and getting it wrong is silent:
         //   1. The link form is checked first, because its target contains a
         //      separator ("notes -> /target") and would otherwise be reported as
         //      a path-separator error instead of an unsupported link.
-        //   2. The directory marker is a *trailing* separator, so it must be
-        //      stripped before looking for separators inside the name.
-        //   3. Only then is an interior separator a real "this would move the
-        //      item" error.
+        //   2. Then the interior separator, because a rename must never move the
+        //      item. There is no directory marker: a rename never changes the
+        //      type, so a folder row is written exactly like a file row.
         if (leaf.find(L" -> ") != std::wstring_view::npos)
         {
             out.errors.push_back(MakeError(lineNumber, OilErrorKind::LinkUnsupported, line));
@@ -120,14 +164,6 @@ OilParseResult ParseOilBuffer(std::wstring_view buffer,
             continue;
         }
 
-        bool isFolder = false;
-        if (!leaf.empty() && (leaf.back() == L'/' || leaf.back() == L'\\'))
-        {
-            isFolder = true;
-            leaf.remove_suffix(1);
-        }
-
-        // A rename must never move the item, so an interior separator is refused.
         if (leaf.find(L'/') != std::wstring_view::npos || leaf.find(L'\\') != std::wstring_view::npos)
         {
             out.errors.push_back(MakeError(lineNumber, OilErrorKind::PathSeparator, line));
@@ -146,9 +182,11 @@ OilParseResult ParseOilBuffer(std::wstring_view buffer,
             continue;
         }
 
+        OilLine parsed;
+        parsed.line = lineNumber;
         parsed.id = id;
         parsed.leaf.assign(leaf);
-        parsed.isFolder = isFolder;
+        parsed.state = *state;
         out.lines.push_back(std::move(parsed));
 
         if (newline == std::wstring_view::npos)

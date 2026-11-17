@@ -273,9 +273,15 @@ struct OilEntry {
     unsigned depth = 0;
 };
 
+// What the row's first column says to do with it. One letter in the buffer, one
+// value here: `y` rename, `n` skip, `d` delete.
+enum class OilState { Rename, Skip, Delete };
+
 enum class OilErrorKind {
-    MalformedAnchor,      // "/" with no digits
-    NoAnchor,             // a non-blank line with no "/<id> " prefix -> create
+    NoAnchor,             // a non-blank line that does not start with a state letter
+    UnknownState,         // the first column is a letter, but not y/n/d
+    MalformedAnchor,      // the id is missing, not a number, or out of range
+    MissingLine,          // an id vanished from the buffer; delete uses "d"
     UnknownId,            // the id is not in the table (was it edited?)
     DuplicateId,          // the same id appears on two lines
     DuplicateName,        // two entries would end up with the same leaf
@@ -285,7 +291,6 @@ enum class OilErrorKind {
     InvalidCharacter,
     TooLong,
     AlreadyExists,
-    DeleteUnsupported,    // an id vanished; oil.nvim supports it, we do not
 };
 
 struct OilError {
@@ -298,8 +303,13 @@ struct OilError {
 struct OilLine {
     std::size_t line = 0;
     long long id = 0;
-    std::wstring leaf;           // trailing separator removed
-    bool isFolder = false;
+    std::wstring leaf;           // name as typed, state letter removed
+    // The line's first column. It is the same state the table's checkbox shows:
+    // one view of "does this row get renamed, skipped, or deleted". The marker
+    // is a letter rather than a symbol because a leading space would be
+    // invisible, would not survive whitespace-trimming editors, and could not be
+    // told apart from visual indentation.
+    OilState state = OilState::Rename;
 };
 
 struct OilParseResult {
@@ -310,17 +320,21 @@ struct OilParseResult {
 OilParseResult ParseOilBuffer(std::wstring_view buffer,
                               const std::vector<OilEntry>& idTable);
 
-enum class OilDiffKind { Rename, Rejected, Skipped };
+// What a buffer line asks for. Removing a line is how the buffer says "delete
+// this item" — the same gesture oil.nvim uses, and the reason the id anchor
+// exists at all: a missing line can only be attributed to a delete because every
+// other line names the object it still refers to.
+enum class OilDiffKind { Rename, Delete, Rejected };
 
-// One entry's outcome. Release one emits only Rename; everything oil.nvim would
-// express as create/delete/move/change is Rejected at this layer, so the
-// executor has a single path (RN-FR-19).
+// One entry's outcome. Create/move/change are still Rejected at this layer, so
+// the executor has a fixed set of actions to run (RN-FR-19).
 struct OilDiff {
     OilDiffKind kind = OilDiffKind::Rejected;
     long long id = 0;
     std::wstring newLeaf;               // Rename only
     OilErrorKind reason = OilErrorKind::NoAnchor;  // Rejected only
     std::size_t line = 0;               // 0 when the diff came from a vanished id
+    bool selected = true;               // the line's selection marker
 };
 
 std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
@@ -329,19 +343,21 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
 // ---- plan -------------------------------------------------------------------
 // One immutable snapshot handed to the executor. The planId is how the UI and
 // the worker agree on staleness: any rule or buffer change kills the old id.
+// What the batch will do with an item. Deletion is a first-class action rather
+// than a rename to an empty name, so the executor never has to guess.
+enum class Action { Rename, Delete };
+
 struct PlanItem {
     std::string id;            // stable per entry, survives mode switches
     std::wstring originalLeaf;
     std::wstring targetLeaf;
     Status status = Status::Init;
+    Action action = Action::Rename;
     bool selected = true;
     bool isFolder = false;
     unsigned depth = 0;
     bool trimmed = false;
     bool hadNbsp = false;
-    // The id was absent from the text buffer. Safe skip: the item is left
-    // untouched, never deleted, and does not block the rest of the batch.
-    bool skipped = false;
     // Set when this row's target is the *current* name of another row that is
     // also moving: the batch must run that row first, or the executor finds the
     // target occupied and refuses. `after` is that row's id.

@@ -50,20 +50,76 @@ bool IsError(rename_core::Status status)
     }
 }
 
+// The first column of a buffer line: "y" rename, "n" skip, "d" delete. Both
+// states are visible, which a leading space would not be.
+wchar_t StateLetter(bool selected, bool deleted)
+{
+    if (deleted)
+        return L'd';
+    return selected ? L'y' : L'n';
+}
+
 } // namespace
 
-std::wstring FormatOilBuffer(const std::vector<rename_core::OilEntry>& table)
+std::wstring FormatOilBuffer(const std::vector<rename_core::OilEntry>& table,
+                             const std::vector<rename_core::PlanItem>* plan)
 {
     std::wstring buffer;
     for (const rename_core::OilEntry& entry : table)
     {
-        buffer += L"/";
+        bool selected = true;
+        bool deleted = false;
+        std::wstring leaf = entry.originalLeaf;
+        if (plan)
+        {
+            for (const rename_core::PlanItem& item : *plan)
+            {
+                if (item.id == std::to_string(entry.id))
+                {
+                    deleted = item.action == rename_core::Action::Delete;
+                    selected = item.selected;
+                    leaf = item.targetLeaf;
+                    break;
+                }
+            }
+        }
+        if (!buffer.empty())
+            buffer += L"\n";
+        buffer += StateLetter(selected, deleted);
+        buffer += L' ';
         buffer += std::to_wstring(entry.id);
-        buffer += L" ";
-        buffer += entry.originalLeaf;
-        if (entry.isFolder)
-            buffer += L"/";
-        buffer += L"\n";
+        buffer += L' ';
+        buffer += leaf;
+        // No trailing newline: QPlainTextEdit otherwise creates a non-item
+        // final block which the cursor can enter below the last file.
+    }
+    return buffer;
+}
+
+std::wstring FormatOilBufferWithPending(
+    const std::vector<rename_core::OilEntry>& table,
+    const std::vector<rename_core::PlanItem>& plan,
+    const std::unordered_map<std::string, Presenter::PendingDeleteState>& pending)
+{
+    std::wstring buffer;
+    for (const rename_core::OilEntry& entry : table)
+    {
+        const std::string id = std::to_string(entry.id);
+        const auto planned = std::find_if(plan.begin(), plan.end(),
+            [&](const rename_core::PlanItem& item) { return item.id == id; });
+        if (!buffer.empty())
+            buffer += L"\n";
+        const auto saved = pending.find(id);
+        const bool deleted = planned != plan.end() && planned->action == rename_core::Action::Delete;
+        const bool selected = saved != pending.end() ? saved->second.selected
+                            : planned == plan.end() ? true : planned->selected;
+        const std::wstring& leaf = saved != pending.end() ? saved->second.targetLeaf
+                                 : planned == plan.end() ? entry.originalLeaf : planned->targetLeaf;
+        buffer += StateLetter(selected, deleted);
+        buffer += L' ';
+        buffer += std::to_wstring(entry.id);
+        buffer += L' ';
+        buffer += leaf;
     }
     return buffer;
 }
@@ -87,10 +143,33 @@ void Presenter::SetItems(std::vector<rename_core::ItemSnapshot> items)
     Rebuild();
 }
 
+void Presenter::ReplaceItems(std::vector<rename_core::ItemSnapshot> items)
+{
+    m_rows.clear();
+    m_plan = rename_core::PreviewPlan{};
+    SetItems(std::move(items));
+}
+
 void Presenter::SetBuffer(std::wstring buffer)
 {
+    const std::vector<rename_core::PlanItem> previousPlan = m_plan.items;
     m_buffer = std::move(buffer);
     Rebuild();
+    // Cache the last visible line the first time it becomes absent. That makes a
+    // planned delete reversible without losing a user-edited target name or its
+    // / versus // participation marker.
+    for (const rename_core::PlanItem& item : m_plan.items)
+    {
+        if (item.action != rename_core::Action::Delete)
+            continue;
+        if (m_pendingDeleteStates.contains(item.id))
+            continue;
+        const auto previous = std::find_if(previousPlan.begin(), previousPlan.end(),
+            [&](const rename_core::PlanItem& candidate) { return candidate.id == item.id; });
+        m_pendingDeleteStates.emplace(item.id, previous == previousPlan.end()
+            ? PendingDeleteState{item.targetLeaf, item.selected}
+            : PendingDeleteState{previous->targetLeaf, previous->selected});
+    }
 }
 
 void Presenter::SetOilTable(std::vector<rename_core::OilEntry> table)
@@ -114,13 +193,16 @@ std::uint64_t Presenter::Rebuild()
     ++m_generation;
     const std::uint64_t planId = rename_core::NextPlanId();
 
-    // Preserve selection *before* rebuilding: RefreshRows() replaces m_rows, so a
-    // capture afterwards would read the new (all-selected) state and every
-    // unchecked row would come back checked after each keystroke.
+    // Control mode has no text representation for selection, so preserve the
+    // list state across rule recalculation. In text mode / versus // is
+    // authoritative and must be allowed to change selection.
     std::vector<std::pair<std::string, bool>> previousSelection;
     previousSelection.reserve(m_rows.size());
-    for (const Row& row : m_rows)
-        previousSelection.emplace_back(row.id, row.selected);
+    if (m_mode == Mode::Control)
+    {
+        for (const Row& row : m_rows)
+            previousSelection.emplace_back(row.id, row.selected);
+    }
 
     if (m_mode == Mode::Control)
     {
@@ -173,10 +255,11 @@ void Presenter::RefreshRows()
         row.originalLeaf = item.originalLeaf;
         row.targetLeaf = item.targetLeaf;
         row.status = item.status;
+        row.action = item.action;
         row.selected = item.selected;
         row.isFolder = item.isFolder;
         row.depth = item.depth;
-        row.skipped = item.skipped;
+        row.pendingDelete = item.action == rename_core::Action::Delete;
         m_rows.push_back(std::move(row));
     }
 }
@@ -193,6 +276,115 @@ void Presenter::SetRowSelected(const std::string& id, bool selected)
         if (item.id == id)
             item.selected = selected;
     }
+    if (m_mode == Mode::Text)
+        m_buffer = FormatOilBuffer(m_oilTable, &m_plan.items);
+    RefreshRows();
+}
+
+bool Presenter::RestorePendingDelete(const std::string& id)
+{
+    if (m_mode != Mode::Text)
+        return false;
+    const auto item = std::find_if(m_plan.items.begin(), m_plan.items.end(),
+        [&](const rename_core::PlanItem& candidate) { return candidate.id == id; });
+    if (item == m_plan.items.end() || item->action != rename_core::Action::Delete)
+        return false;
+
+    const auto saved = m_pendingDeleteStates.find(id);
+    const PendingDeleteState restored = saved == m_pendingDeleteStates.end()
+        ? PendingDeleteState{item->targetLeaf, item->selected}
+        : saved->second;
+    m_pendingDeleteStates.erase(id);
+    std::wstring buffer;
+    for (const rename_core::OilEntry& entry : m_oilTable)
+    {
+        const std::string entryId = std::to_string(entry.id);
+        const auto planned = std::find_if(m_plan.items.begin(), m_plan.items.end(),
+            [&](const rename_core::PlanItem& candidate) { return candidate.id == entryId; });
+        const bool restoreThis = entryId == id;
+        if (!buffer.empty())
+            buffer += L"\n";
+        const bool deleted = !restoreThis && planned != m_plan.items.end()
+                             && planned->action == rename_core::Action::Delete;
+        const bool selected = restoreThis ? restored.selected
+                            : planned == m_plan.items.end() ? true : planned->selected;
+        const std::wstring& leaf = restoreThis ? restored.targetLeaf
+                                 : planned == m_plan.items.end() ? entry.originalLeaf : planned->targetLeaf;
+        buffer += StateLetter(selected, deleted);
+        buffer += L' ';
+        buffer += std::to_wstring(entry.id);
+        buffer += L' ';
+        buffer += leaf;
+    }
+    m_buffer = std::move(buffer);
+    Rebuild();
+    return true;
+}
+
+bool Presenter::RevertRow(const std::string& id)
+{
+    if (m_mode != Mode::Text)
+        return false;
+
+    bool found = false;
+    std::wstring buffer;
+    for (const rename_core::OilEntry& entry : m_oilTable)
+    {
+        const std::string entryId = std::to_string(entry.id);
+        const auto planned = std::find_if(m_plan.items.begin(), m_plan.items.end(),
+            [&](const rename_core::PlanItem& candidate) { return candidate.id == entryId; });
+        const bool revertThis = entryId == id;
+        found = found || revertThis;
+        if (!buffer.empty())
+            buffer += L"\n";
+        const bool deleted = !revertThis && planned != m_plan.items.end()
+                             && planned->action == rename_core::Action::Delete;
+        // The reverted row goes back to its on-disk name and to whatever
+        // selection it had before the edit; every other row keeps its state.
+        const bool selected = revertThis ? true
+                            : planned == m_plan.items.end() ? true : planned->selected;
+        const std::wstring& leaf = revertThis ? entry.originalLeaf
+                                 : planned == m_plan.items.end() ? entry.originalLeaf : planned->targetLeaf;
+        buffer += StateLetter(selected, deleted);
+        buffer += L' ';
+        buffer += std::to_wstring(entry.id);
+        buffer += L' ';
+        buffer += leaf;
+    }
+    if (!found)
+        return false;
+    m_pendingDeleteStates.erase(id);
+    m_buffer = std::move(buffer);
+    Rebuild();
+    return true;
+}
+
+bool Presenter::RevertAllEdits()
+{
+    if (m_mode != Mode::Text)
+        return false;
+
+    // Names and delete marks go back to the on-disk state; the selection the user
+    // set is kept, because unchecking a row is not an edit of the batch's names.
+    std::wstring buffer;
+    for (const rename_core::OilEntry& entry : m_oilTable)
+    {
+        const std::string entryId = std::to_string(entry.id);
+        const auto planned = std::find_if(m_plan.items.begin(), m_plan.items.end(),
+            [&](const rename_core::PlanItem& candidate) { return candidate.id == entryId; });
+        const bool selected = planned == m_plan.items.end() ? true : planned->selected;
+        if (!buffer.empty())
+            buffer += L"\n";
+        buffer += StateLetter(selected, false);
+        buffer += L' ';
+        buffer += std::to_wstring(entry.id);
+        buffer += L' ';
+        buffer += entry.originalLeaf;
+    }
+    m_pendingDeleteStates.clear();
+    m_buffer = std::move(buffer);
+    Rebuild();
+    return true;
 }
 
 void Presenter::SelectAllVisible(bool selected)
@@ -212,7 +404,7 @@ std::vector<Row> Presenter::VisibleRows() const
     for (const Row& row : m_rows)
     {
         const bool applicable = !IsError(row.status) &&
-                                row.status != rename_core::Status::Unchanged;
+                                (row.status != rename_core::Status::Unchanged || row.pendingDelete);
 
         switch (m_filter)
         {
@@ -238,13 +430,17 @@ std::vector<Row> Presenter::VisibleRows() const
 
 Counts Presenter::CurrentCounts() const
 {
+    // Only checked rows are in the batch: the executor, the badges and the
+    // confirmation must all agree, so an unchecked row never inflates them.
     Counts counts;
     for (const Row& row : m_rows)
     {
+        if (!row.selected)
+            continue;
         if (IsError(row.status))
             ++counts.errors;
-        else if (row.skipped)
-            ++counts.skipped;
+        else if (row.pendingDelete)
+            ++counts.toDelete;
         else if (row.status == rename_core::Status::Ready)
             ++counts.ready;
         else
@@ -261,7 +457,7 @@ bool Presenter::CanExecute() const
         return false;
 
     const Counts counts = CurrentCounts();
-    return counts.ready > 0;
+    return counts.ready > 0 || counts.toDelete > 0;
 }
 
 std::wstring Presenter::BlockingReason() const
@@ -380,12 +576,13 @@ std::vector<Row> Presenter::ExecutionOrder() const
     return out;
 }
 
-void Presenter::ApplyExecutedResults(const std::vector<std::pair<std::string, std::wstring>>& applied)
+void Presenter::ApplyExecutedResults(const std::vector<std::pair<std::string, std::wstring>>& renamed,
+                                     const std::vector<std::string>& deleted)
 {
     // Rebuild the oil table from the results: the renamed entry now has the new
     // leaf as its original, and ids stay put so a second edit addresses the same
     // objects. Without this, a second edit would point at the pre-rename names.
-    for (const auto& [id, newLeaf] : applied)
+    for (const auto& [id, newLeaf] : renamed)
     {
         for (rename_core::OilEntry& entry : m_oilTable)
         {
@@ -396,14 +593,37 @@ void Presenter::ApplyExecutedResults(const std::vector<std::pair<std::string, st
             }
         }
     }
+    for (const std::string& id : deleted)
+    {
+        m_oilTable.erase(std::remove_if(m_oilTable.begin(), m_oilTable.end(),
+                                        [&](const rename_core::OilEntry& entry) {
+                                            return std::to_string(entry.id) == id;
+                                        }),
+                         m_oilTable.end());
+    }
 
-    // Drop the rows that succeeded; a batch is finished once executed. The oil
-    // table keeps the new names so the buffer shows the state the disk is in,
-    // and the empty input set is what the empty table honestly reports.
-    m_items.clear();
+    // Keep the completed batch visible. Renamed entries now use their on-disk
+    // leaves; deleted entries have been removed from the oil table above. A user
+    // can therefore inspect and continue working with the refreshed list instead
+    // of seeing a completion sentence replace the entire preview.
+    for (const auto& [id, newLeaf] : renamed)
+    {
+        for (rename_core::ItemSnapshot& item : m_items)
+        {
+            if (item.id == id)
+            {
+                item.leaf = newLeaf;
+                break;
+            }
+        }
+    }
+    m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
+                                 [&](const rename_core::ItemSnapshot& item) {
+                                     return std::find(deleted.begin(), deleted.end(), item.id) != deleted.end();
+                                 }),
+                  m_items.end());
     m_buffer = FormatOilBuffer(m_oilTable);
-    m_plan = rename_core::PreviewPlan{};
-    m_rows.clear();
+    Rebuild();
     m_phase = Phase::Idle;
 }
 
