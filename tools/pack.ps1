@@ -43,6 +43,17 @@ try {
     Copy-Item $exe (Join-Path $stage "rename.exe")
     Copy-Item (Join-Path $root "package\plugin.json") (Join-Path $stage "plugin.json")
 
+    # The WinShun plugin registry requires a README inside the package (what
+    # the plugin does, which permissions and why). Ship the README pair and the
+    # license beside the manifest, like binarylab's packages do.
+    foreach ($doc in "README.md", "README.en.md", "LICENSE") {
+        $src = Join-Path $root $doc
+        if (-not (Test-Path $src)) {
+            Write-Error "$doc is missing next to the sources; it must ship inside the package"
+        }
+        Copy-Item $src (Join-Path $stage $doc)
+    }
+
     # Qt Widgets is not in WinShun's shared-Qt contract yet. Until it is, the
     # plugin must carry the one extra DLL beside its exe; Windows finds it there
     # before the host's Qt directory. Same Qt version as the host, per the
