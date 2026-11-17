@@ -28,11 +28,14 @@ endif()
 option(RENAME_BUILD_QT "Build the Qt Widgets window (requires Qt 6.5+)" OFF)
 
 if(RENAME_BUILD_QT)
-    set(RENAME_CRT "MultiThreadedDLL$<$<CONFIG:Debug>:MultiThreadedDebugDLL>")
+    # A generator expression, so the multi-config Visual Studio generator (which
+    # does not know the configuration at generate time) picks exactly one value
+    # instead of concatenating both.
+    set(RENAME_CRT "$<IF:$<CONFIG:Debug>,MultiThreadedDebugDLL,MultiThreadedDLL>")
 else()
     # Static CRT: no runtime DLL for the sandbox to refuse to load, and normal
     # mode starts faster.
-    set(RENAME_CRT "MultiThreaded$<$<CONFIG:Debug>:MultiThreadedDebug>")
+    set(RENAME_CRT "$<IF:$<CONFIG:Debug>,MultiThreadedDebug,MultiThreaded>")
 endif()
 
 # ---- rename_core: pure logic, no Windows and no Qt headers --------------------
