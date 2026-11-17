@@ -1,14 +1,38 @@
-# Rename（Proposal）
+# 批量重命名（ra9fael.rename）
 
-**状态：核心与窗口已在本地验证（S1–S9），宿主未验证。** 本地验证规范见 [TEST-SPEC.md](TEST-SPEC.md)，本轮实测记录见 [docs/validation/rename-local-20261113/](docs/validation/rename-local-20261113/README.md)。语言/文档互链：[English](README.en.md) · [设计与需求](plugin-design.md) · [界面规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md)。
+Win顺 的批量重命名插件：选中一个文件夹（或同目录的一组项目），用规则链或文本缓冲区预览并改名。单文件改名请用 Win顺 自带的 F2。
 
-## Qt Widgets 实验
+**0.4.4 已发布。** 源码与 Release 在 [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename)，tag `v0.4.4` 对应 commit `5dbf8cb`：发布工作流从该 tag 在 windows-2022 上构建、跑测试、打包，再把 `.wsplugin` 附到 Release（[本轮记录](docs/validation/rename-release-20261117/README.md)）。
+语言/文档互链：[English](README.en.md) · [设计与需求](plugin-design.md) · [界面规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [Vim 模式](docs/VIM-MODE.md)。
 
-这个分支把窗口从 Qt Quick 换成了 Qt Widgets：`ui/widgets_window.*` 是新的表格、规则栏和文本编辑器，`ui/qt_host.cpp` 只负责创建 `QApplication` 和窗口。核心、Presenter、Bridge 和执行器没变。构建仍用 `-DRENAME_BUILD_QT=ON`，但需要 Qt Widgets；`tools/pack.ps1` 会把 `Qt6Widgets.dll` 一起装进包（WinShun 的共享 Qt 契约目前还没有 Widgets）。实测、截图和未验证项见 [docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md)。
+## 安装
 
-## Vim 模式（0.4.0，默认关闭）
+- 插件库：`Win顺 → 设置 → 插件 → 插件库`，搜“批量重命名”安装。
+- 手动：在 [v0.4.4 Release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.4) 下载 `ra9fael.rename-0.4.4.wsplugin`（同页有 `.sha256`）后安装。
 
-文本模式支持 Vim 按键。核心是独立的可移植库 [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore)（纯 C++20，无 Qt/Win32），以 submodule 挂在 `vendor/vimcore`；Qt 适配层 `ui/vim_qt.*` 留在本仓库。细节见 [docs/VIM-MODE.md](docs/VIM-MODE.md)。
+需要 Win顺 0.22.0 或更高。包内带 `Qt6Widgets.dll`：Win顺 的共享 Qt 契约还没有 Qt Widgets，Qt 6.12 的其余部分由宿主提供。
+
+## 权限
+
+| 权限 | 用途 |
+|---|---|
+| `ui` | 插件自己的窗口：表格、规则栏、文本缓冲区 |
+| `files:read` | 列出选中目录的子项、读文件名与时间/大小属性（改名前后核对文件身份），以及元数据模板用到的图片元数据（只对 jpg/jpeg/png/tif/tiff/heic/heif/avif，先按扩展名筛选） |
+| `files:write` | 改名；删除经 Shell `IFileOperation` 移入回收站 |
+
+不联网，不启动包外的程序，以普通权限运行。批量处理只改文件名，不改文件内容。
+
+## Qt Widgets 窗口
+
+窗口是 Qt Widgets：`ui/widgets_window.*` 是新的表格、规则栏和文本编辑器，`ui/qt_host.cpp` 只负责创建 `QApplication` 和窗口。核心、Presenter、Bridge 和执行器没变。构建仍用 `-DRENAME_BUILD_QT=ON`，但需要 Qt Widgets；`tools/pack.ps1` 会把 `Qt6Widgets.dll` 一起装进包（WinShun 的共享 Qt 契约目前还没有 Widgets）。实测、截图和未验证项见 [docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md)。
+
+## Vim 模式
+
+文本模式支持 Vim 按键，默认关闭。核心是独立的可移植库 [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore)（纯 C++20，无 Qt、无 Win32），以 submodule 挂在 `vendor/vimcore`；Qt 适配层 `ui/vim_qt.*` 留在本仓库，选择记在 `<dataDir>/settings.json`。
+
+支持 `h j k l w b e 0 ^ $ gg G f F t T %`、`i a I A o O s R`、`d c y` 配 motion（含 `f F t T` 与 `;`/`,` 重复，`d;`/`d,` 按上次查找）、文本对象与叠用（`dd cc yy D C S x X Y p P J r ~`）、`v`/`V`/Ctrl+Q 选区（含块选）与选区 `r` 一字符替换、计数前缀、`.` 重放、Ctrl+A/X 数字增减、Ctrl+D/U/F/B 翻页，以及 `:` 命令行（查找替换、`:s`、`:%s`、`:q`、`:q!`）。非插入模式下输入法不向缓冲区漏字。
+
+按键边界、Esc 归属、撤销、输入法与测试见 [docs/VIM-MODE.md](docs/VIM-MODE.md)。
 
 ```bash
 git clone --recurse-submodules <repo>      # 或者克隆后补一步：
@@ -65,21 +89,45 @@ rename-ui.exe                                   # 空窗口
 
 - **不做冲突自动改名**。PowerRename 用 `FOF_RENAMEONCOLLISION` 把冲突改成 `name (1)`；我们冲突即拒绝，绝不覆盖。
 - **不抄它的死代码**。`ItemNameAlreadyExists` 枚举值在 PowerRename 里从未被赋值，我们把目标已存在判定真正实现。
-- **文本模式首版只做改名**。oil.nvim 支持新建/删除/移动/跨目录，我们收敛到改名，使风险面与控件模式完全相同。
+- **文本模式只做改名**。oil.nvim 支持新建/删除/移动/跨目录，我们收敛到改名（删除走回收站），使风险面与控件模式相同。
 - **不实现树视图**。照抄 oil.nvim 自己的判断：树视图是另一套方法论。
 - **不写自研恢复日志**。改名与撤销都交给 Shell，崩溃后不自动回滚，只保留只读批次清单做诊断。
 
-## 建议能力
+## 能力范围
 
 规则作用范围：名称、扩展名、完整名称；匹配首个或全部；计数模板和日期模板；元数据模板（EXIF/XMP，限 8 种扩展名）；大小写变换四档；预览匹配高亮、选择、过滤、排序；规则链和预设。
 
-执行设计明确处理取消、交换名、父子目录组合、仅大小写变更、Unicode 与 NFD、Windows 保留名、执行期间外部修改及 SMB 行为。撤销走 Shell 撤销栈，撤销前重新核对文件身份，不覆盖后来创建的文件。首版 AI 不作为核心功能。递归收集为 P1 可选项、默认关闭，显式开启后仅收集选定根下文件、不自动改目录。文件仅最后后缀为 extension（`archive.tar.gz` 为 `gz`），`.gitignore` 无后缀；无后缀 extension 规则默认跳过并解释，目录 extension 不适用。尾部空白与点按收尾规则去除，但预览显式提示，不静默。
+执行设计明确处理取消、交换名、父子目录组合、仅大小写变更、Unicode 与 NFD、Windows 保留名、执行期间外部修改及 SMB 行为。撤销走 Shell 撤销栈，撤销前重新核对文件身份，不覆盖后来创建的文件。AI 不在核心功能内。递归收集默认关闭，显式开启后仅收集选定根下文件、不自动改目录。文件仅最后后缀为 extension（`archive.tar.gz` 为 `gz`），`.gitignore` 无后缀；无后缀 extension 规则默认跳过并解释，目录 extension 不适用。尾部空白与点按收尾规则去除，但预览显式提示，不静默。
+
+## 源码与构建
+
+本版本源码是 tag `v0.4.4`（commit `5dbf8cb`）。构建、测试并打包：
+
+```powershell
+git submodule update --init --recursive
+cmake -S . -B build-qt -G Ninja -DCMAKE_BUILD_TYPE=Release -DRENAME_BUILD_QT=ON `
+  -DCMAKE_PREFIX_PATH=D:\tools\Qt\6.12.0\msvc2022_64
+cmake --build build-qt --parallel
+ctest --test-dir build-qt --output-on-failure
+pwsh -File tools/pack.ps1 -BuildDir build-qt -OutDir dist
+```
+
+`ctest` 是 6 个目标：`vim_qt`、`vim_window`、`rename_core`、`rename_e2e`、`core_purity`、`action_payload`；`vendor/vimcore` 自带的两套测试单独构建（`-DVIMCORE_BUILD_TESTS=ON`）。
+
+发布由 `.github/workflows/release.yml` 完成：推一个 `v<版本>` tag，windows-2022 上装 Qt 6.12、构建、跑测试、用同一个 `pack.ps1` 打包，再把 `.wsplugin` 与它配对的 `.sha256` 附到 Release。`workflow_dispatch` 只验证、不发布。
+
+## 已知问题
+
+- 真实鼠标交互（右键菜单进入、表格勾选、目录栏、确认对话框）用宿主同环境的模拟进程与渲染图验证，没有逐项手点。
+- 非插入模式的输入法隔离依赖平台层解除输入法绑定；中文输入法的真机组合行为未逐项实测。
+- ex 命令行只到 `:`（查找/替换）、`:s`、`:%s`、`:q`、`:q!`；命名寄存器、宏、marks、`/`/`?` 搜索、多缓冲区不做。
+- `Qt6Widgets.dll` 暂随包分发，共享 Qt 契约纳入 Widgets 后应移除这一项。
 
 ## 文档索引
 
 - [设计与 11 节需求](plugin-design.md)：事实（含两份借鉴对象的逐条来源）、双模式架构、需求 ID、权限、失败矩阵、诚实笔记。
 - [UI 规格](UI-SPEC.md)：两种模式各一张 ASCII 线框、布局、字段、快捷键、错误态、主题/缩放与无障碍。
 - [测试计划](TEST-PLAN.md)：逐行 ID、FR、L0-L5、前置、步骤、预期、证据、未执行状态；含"与借鉴对象的行为差异"防错清单。
-- [本地验证规范](TEST-SPEC.md)：装进宿主之前本地必须验证到什么程度（S1–S9），含目录输入集与单文件路径的断言；先于实现。
-
-核心、平台边界与窗口已在本地通过（`ctest` 3/3、`rename_e2e` 36/36、S9 六张渲染图）。宿主集成、真机交互与发布仍是未验证目标。
+- [本地验证规范](TEST-SPEC.md)：装进宿主之前本地必须验证到什么程度（S1–S9），含目录输入集与单文件路径的断言。
+- [Vim 模式](docs/VIM-MODE.md)：取舍、按键边界、输入法与测试。
+- [发布记录 0.4.4](docs/validation/rename-release-20261117/README.md)：tag、CI 运行、产物校验与本机测试。

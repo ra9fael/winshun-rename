@@ -1,16 +1,45 @@
-# Rename (Proposal)
+# Batch Rename (ra9fael.rename)
 
-**Status: core and window verified locally (S1–S9); the host is not verified.** Local verification spec: [TEST-SPEC.en.md](TEST-SPEC.en.md). This round's measurements: [docs/validation/rename-local-20261113/README.en.md](docs/validation/rename-local-20261113/README.en.md). Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md).
+A batch-rename plugin for Win顺: pick a folder (or a same-directory selection), preview the result built from a rule chain or a text buffer, then rename. For a single file, use Win顺's own F2.
 
-## Qt Widgets experiment
+**0.4.4 is released.** Source and releases live at [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename); tag `v0.4.4` is commit `5dbf8cb`. The release workflow builds that tag on windows-2022, runs the tests, packages, and attaches the `.wsplugin` to the release ([this round's record](docs/validation/rename-release-20261117/README.md)).
+Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Vim mode](docs/VIM-MODE.md).
 
-This branch replaces the Qt Quick window with Qt Widgets: `ui/widgets_window.*`
-holds the table, rule column and text editor, and `ui/qt_host.cpp` only creates
-the `QApplication` and the window. The core, presenter, bridge and executor are
-unchanged. Build with `-DRENAME_BUILD_QT=ON` as before, but Qt Widgets is now
-required; `tools/pack.ps1` bundles `Qt6Widgets.dll` until WinShun's shared-Qt
-contract includes it. Measurements, screenshots and open items:
-[docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md).
+## Installing
+
+- Plugin library: `Win顺 → Settings → Plugins → Plugin library`, search for "Batch Rename".
+- Manually: download `ra9fael.rename-0.4.4.wsplugin` from the [v0.4.4 release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.4) (a `.sha256` sits beside it) and install it.
+
+Requires Win顺 0.22.0 or newer. The package carries `Qt6Widgets.dll`: WinShun's shared-Qt contract does not include Qt Widgets yet, and the host supplies the rest of Qt 6.12.
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| `ui` | The plugin's own window: table, rule column, text buffer |
+| `files:read` | List the selected folder's entries, read names and size/write-time attributes (to verify file identity before and after), and the image metadata that metadata templates use (jpg/jpeg/png/tif/tiff/heic/heif/avif only, screened by extension first) |
+| `files:write` | Rename; deletes go through Shell `IFileOperation` to the Recycle Bin |
+
+No network, no launching programs outside the package, ordinary user rights. A batch changes file names, never file contents.
+
+## Qt Widgets window
+
+The window is Qt Widgets: `ui/widgets_window.*` holds the table, rule column and text editor, and `ui/qt_host.cpp` only creates the `QApplication` and the window. The core, `rename_ui::Presenter`, `Bridge` and the executor are unchanged. Build with `-DRENAME_BUILD_QT=ON` as before, but Qt Widgets is now required; `tools/pack.ps1` bundles `Qt6Widgets.dll` until WinShun's shared-Qt contract includes it. Measurements, screenshots and open items: [docs/validation/rename-widgets-20261115/README.md](docs/validation/rename-widgets-20261115/README.md).
+
+## Vim mode
+
+Text mode can take Vim keys; it is off by default. The core is the portable [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore) library (pure C++20, no Qt, no Win32) in this repo as the `vendor/vimcore` submodule; the Qt adapter `ui/vim_qt.*` stays here, and the choice is stored in `<dataDir>/settings.json`.
+
+Covered: `h j k l w b e 0 ^ $ gg G f F t T %`; `i a I A o O s R`; `d c y` with motions (including `f F t T` and the `;`/`,` repeats, `d;`/`d,` reusing the last find), text objects and doubled forms (`dd cc yy D C S x X Y p P J r ~`); `v`/`V`/Ctrl+Q selections including block-wise, with `r` replacing the selection with one character; count prefixes; `.` repeat; Ctrl+A/X; Ctrl+D/U/F/B paging; and the `:` command line (find/replace, `:s`, `:%s`, `:q`, `:q!`). Outside Insert mode an input method does not leak text into the buffer.
+
+Key boundaries, Esc ownership, undo, the input method and the tests are in [docs/VIM-MODE.md](docs/VIM-MODE.md).
+
+```bash
+git clone --recurse-submodules <repo>      # or, after a plain clone:
+git submodule update --init --recursive
+```
+
+Without the submodule CMake fails with that command rather than silently dropping Vim mode.
 
 ## Trying it locally (no host)
 
@@ -60,21 +89,45 @@ Reference: the local PowerToys checkout at `PowerToys/src/modules/PowerRename/` 
 
 - **No rename-on-collision.** PowerRename uses `FOF_RENAMEONCOLLISION` to turn conflicts into `name (1)`; we refuse instead and never overwrite.
 - **We do not copy its dead code.** PowerRename defines `ItemNameAlreadyExists` but never assigns it; we actually implement target-exists detection.
-- **Text mode does renames only in release one.** oil.nvim supports create/delete/move/cross-directory; we narrow to renames so the risk surface equals control mode.
+- **Text mode does renames only.** oil.nvim supports create/delete/move/cross-directory; we narrow to renames (deletes go to the Recycle Bin) so the risk surface equals control mode.
 - **No tree view.** Following oil.nvim's own judgment: a tree view is a different methodology.
 - **No self-built recovery journal.** Rename and undo go to the Shell; after a crash we never auto-roll-back and keep only a read-only batch journal for diagnostics.
 
-## Proposed capabilities
+## Scope
 
 Rule scopes: name, extension, full name; first or all matches; counter templates and date templates; metadata templates (EXIF/XMP, limited to 8 extensions); four case transforms; preview match highlighting, selection, filtering, and sorting; rule chains and presets.
 
-Execution design explicitly handles cancellation, name swaps, parent/child directory combinations, case-only changes, Unicode and NFD, Windows reserved names, external changes during execution, and SMB behavior. Undo goes through the Shell undo stack and re-verifies file identity first, never overwriting a file created later. AI is not a core feature in release one. Recursive collection is optional P1, off by default; explicit opt-in collects files under selected roots without automatically renaming directories. Only the final file suffix is extension (`gz` for `archive.tar.gz`); `.gitignore` has none. Extension rules skip extensionless files with an explanation; directory extension is inapplicable. Trailing whitespace and dots are removed by the finalization rules, but preview reports it explicitly rather than silently.
+Execution design explicitly handles cancellation, name swaps, parent/child directory combinations, case-only changes, Unicode and NFD, Windows reserved names, external changes during execution, and SMB behavior. Undo goes through the Shell undo stack and re-verifies file identity first, never overwriting a file created later. AI is not a core feature. Recursive collection is off by default; explicit opt-in collects files under selected roots without automatically renaming directories. Only the final file suffix is extension (`gz` for `archive.tar.gz`); `.gitignore` has none. Extension rules skip extensionless files with an explanation; directory extension is inapplicable. Trailing whitespace and dots are removed by the finalization rules, but preview reports it explicitly rather than silently.
+
+## Source and build
+
+This version's source is tag `v0.4.4` (commit `5dbf8cb`). Build, test and package:
+
+```powershell
+git submodule update --init --recursive
+cmake -S . -B build-qt -G Ninja -DCMAKE_BUILD_TYPE=Release -DRENAME_BUILD_QT=ON `
+  -DCMAKE_PREFIX_PATH=D:\tools\Qt\6.12.0\msvc2022_64
+cmake --build build-qt --parallel
+ctest --test-dir build-qt --output-on-failure
+pwsh -File tools/pack.ps1 -BuildDir build-qt -OutDir dist
+```
+
+`ctest` is six targets: `vim_qt`, `vim_window`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`. `vendor/vimcore` ships its own two suites, built separately (`-DVIMCORE_BUILD_TESTS=ON`).
+
+Release is `.github/workflows/release.yml`: push a `v<version>` tag, and windows-2022 installs Qt 6.12, builds, runs the tests, packages with the same `pack.ps1`, and attaches the `.wsplugin` plus its paired `.sha256` to the release. `workflow_dispatch` only verifies, never publishes.
+
+## Known issues
+
+- Real mouse interaction (entering from the right-click menu, table checkboxes, the directory bar, the confirmation dialog) is verified with a host-like process and rendered grabs, not by clicking through each one.
+- The input-method isolation outside Insert mode relies on unbinding the input method at the platform layer; Chinese IME composition on real hardware has not been exercised case by case.
+- The ex command line stops at `:` (find/replace), `:s`, `:%s`, `:q`, `:q!`; named registers, macros, marks, `/`/`?` search and multiple buffers are out of scope.
+- `Qt6Widgets.dll` ships inside the package for now; that item goes away once the shared-Qt contract covers Widgets.
 
 ## Documents
 
 - [Design and 11-section requirements](plugin-design.en.md): facts (with per-item sources for both references), dual-mode architecture, requirement IDs, permissions, failure matrix, honest notes.
 - [UI specification](UI-SPEC.en.md): one ASCII wireframe per mode, layout, fields, keyboard shortcuts, error states, theme/scaling, and accessibility.
 - [Test plan](TEST-PLAN.en.md): row-level ID, FR, L0-L5, preconditions, steps, expected result, evidence, and unexecuted status, plus a "behavioural differences from the references" regression list.
-- [Local verification spec](TEST-SPEC.en.md): what must be verified locally (S1–S9) before the host is involved, including the directory input set and the single-file path. Written before the implementation.
-
-The core, the platform edge and the window pass locally (`ctest` 3/3, `rename_e2e` 36/36, six S9 renders). Host integration, real-hardware behaviour and release remain unverified goals.
+- [Local verification spec](TEST-SPEC.en.md): what must be verified locally (S1–S9) before the host is involved, including the directory input set and the single-file path.
+- [Vim mode](docs/VIM-MODE.md): trade-offs, key boundaries, the input method, and tests.
+- [0.4.4 release record](docs/validation/rename-release-20261117/README.md): tag, CI run, artifact verification and local test results.
