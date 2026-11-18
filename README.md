@@ -2,13 +2,13 @@
 
 Win顺 的批量重命名插件：右键选中的文件或文件夹打开工作窗口，用规则链或文本缓冲区预览并改名。选中的项目就是窗口的输入集，选中一个文件夹改的是这个文件夹本身；文件夹里的项目从“在此文件夹批量重命名…”打开。单文件改名请用 Win顺 自带的 F2。
 
-**0.4.5 已发布。** 源码与 Release 在 [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename)，tag `v0.4.5` 对应 commit `046f77b`：发布工作流从该 tag 在 windows-2022 上构建、跑测试、打包，再把 `.wsplugin` 附到 Release。
+**0.5.2 已发布。** 源码与 Release 在 [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename)，tag `v0.5.2`：发布工作流从该 tag 在 windows-2022 上构建、跑测试、打包，再把 `.wsplugin` 附到 Release。
 语言/文档互链：[English](README.en.md) · [设计与需求](plugin-design.md) · [界面规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [Vim 模式](docs/VIM-MODE.md)。
 
 ## 安装
 
 - 插件库：`Win顺 → 设置 → 插件 → 插件库`，搜“批量重命名”安装。
-- 手动：在 [v0.4.5 Release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.5) 下载 `ra9fael.rename-0.4.5.wsplugin`（同页有 `.sha256`）后安装。
+- 手动：在 [v0.5.2 Release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.5.2) 下载 `ra9fael.rename-0.5.2.wsplugin`（同页有 `.sha256`）后安装。
 
 需要 Win顺 0.33.0 或更高：右键菜单的显示开关用的是 `triggers.files.if`，该版本起宿主才会读它。包内带 `Qt6Widgets.dll`：Win顺 的共享 Qt 契约还没有 Qt Widgets，Qt 6.12 的其余部分由宿主提供。
 
@@ -109,7 +109,7 @@ rename-ui.exe                                   # 空窗口
 
 ## 源码与构建
 
-本版本源码是 tag `v0.4.5`（commit `046f77b`）。构建、测试并打包：
+本版本源码是 tag `v0.5.2`。构建、测试并打包：
 
 ```powershell
 git submodule update --init --recursive
@@ -138,4 +138,5 @@ pwsh -File tools/pack.ps1 -BuildDir build-qt -OutDir dist
 - [测试计划](TEST-PLAN.md)：逐行 ID、FR、L0-L5、前置、步骤、预期、证据、未执行状态；含"与借鉴对象的行为差异"防错清单。
 - [本地验证规范](TEST-SPEC.md)：装进宿主之前本地必须验证到什么程度（S1–S9），含目录输入集与单文件路径的断言。
 - [Vim 模式](docs/VIM-MODE.md)：取舍、按键边界、输入法与测试。
-- [发布记录 0.4.4](docs/validation/rename-release-20261117/README.md)：tag、CI 运行、产物校验与本机测试。
+- [发布记录 0.5.1](docs/validation/rename-menu-20261119/README.md)：tag、CI 运行、产物校验与本机测试。
+- [发布记录 0.4.4](docs/validation/rename-release-20261117/README.md)：更早一版的同样留痕。

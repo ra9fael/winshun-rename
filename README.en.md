@@ -2,13 +2,13 @@
 
 A batch-rename plugin for Win顺: right-click selected files or folders to open the work window, preview the result built from a rule chain or a text buffer, then rename. The selection is the window's input set, so a selected folder is renamed itself; a folder's contents come from "Batch rename in this folder". For a single file, use Win顺's own F2.
 
-**0.4.5 is released.** Source and releases live at [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename); tag `v0.4.5` is commit `046f77b`. The release workflow builds that tag on windows-2022, runs the tests, packages, and attaches the `.wsplugin` to the release.
+**0.5.2 is released.** Source and releases live at [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename); tag `v0.5.2`. The release workflow builds that tag on windows-2022, runs the tests, packages, and attaches the `.wsplugin` to the release.
 Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Vim mode](docs/VIM-MODE.md).
 
 ## Installing
 
 - Plugin library: `Win顺 → Settings → Plugins → Plugin library`, search for "Batch Rename".
-- Manually: download `ra9fael.rename-0.4.5.wsplugin` from the [v0.4.5 release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.5) (a `.sha256` sits beside it) and install it.
+- Manually: download `ra9fael.rename-0.5.2.wsplugin` from the [v0.5.2 release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.5.2) (a `.sha256` sits beside it) and install it.
 
 Requires Win顺 0.33.0 or newer: the result-menu switch uses `triggers.files.if`, which hosts read from that version on. The package carries `Qt6Widgets.dll`: WinShun's shared-Qt contract does not include Qt Widgets yet, and the host supplies the rest of Qt 6.12.
 
@@ -109,7 +109,7 @@ Execution design explicitly handles cancellation, name swaps, parent/child direc
 
 ## Source and build
 
-This version's source is tag `v0.4.5` (commit `046f77b`). Build, test and package:
+This version's source is tag `v0.5.2`. Build, test and package:
 
 ```powershell
 git submodule update --init --recursive
@@ -138,4 +138,5 @@ Release is `.github/workflows/release.yml`: push a `v<version>` tag, and windows
 - [Test plan](TEST-PLAN.en.md): row-level ID, FR, L0-L5, preconditions, steps, expected result, evidence, and unexecuted status, plus a "behavioural differences from the references" regression list.
 - [Local verification spec](TEST-SPEC.en.md): what must be verified locally (S1–S9) before the host is involved, including the directory input set and the single-file path.
 - [Vim mode](docs/VIM-MODE.md): trade-offs, key boundaries, the input method, and tests.
-- [0.4.4 release record](docs/validation/rename-release-20261117/README.md): tag, CI run, artifact verification and local test results.
+- [0.5.1 release record](docs/validation/rename-menu-20261119/README.md): tag, CI run, artifact verification and local test results.
+- [0.4.4 release record](docs/validation/rename-release-20261117/README.md): the same trace for the version before it.

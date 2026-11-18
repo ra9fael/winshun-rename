@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.2] - 2026-11-19
+
+- The packaged READMEs follow this version: the install links point at the current release, the source section names the current tag, and the release record lists 0.5.1. The code is the same as 0.5.1.
+
 ## [0.5.1] - 2026-11-19
 
 - Going up, refreshing or opening another folder from the text tab keeps the text tab: the buffer is rebuilt for the new folder instead of dropping back to the rule tab.
