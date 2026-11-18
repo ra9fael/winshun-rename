@@ -123,6 +123,7 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
     case IdRole:       return QString::fromStdString(row.id);
     case OriginalRole: return ToQt(row.originalLeaf);
     case TargetRole:   return ToQt(row.targetLeaf);
+    case ParentRole:   return ToQt(row.parent);
     case StatusRole:   return StatusText(row.status);
     case SelectedRole: return row.selected;
     case IsFolderRole: return row.isFolder;
@@ -206,6 +207,9 @@ QVariant PreviewModel::data(const QModelIndex& index, int role) const
     case Qt::ToolTipRole:
         if (error)
             return targetText(row);
+        // A folder on the row is elided to fit; the whole one is in the tooltip.
+        if (index.column() == 1 && !row.parent.empty())
+            return ToQt(row.parent);
         return row.note.empty() ? QVariant() : ToQt(row.note);
     default:
         return {};
@@ -248,6 +252,7 @@ QHash<int, QByteArray> PreviewModel::roleNames() const
         {IdRole, "rowId"},
         {OriginalRole, "originalName"},
         {TargetRole, "targetName"},
+        {ParentRole, "parentFolder"},
         {StatusRole, "status"},
         {SelectedRole, "selected"},
         {IsFolderRole, "isFolder"},
@@ -632,11 +637,22 @@ void Bridge::setSelection(const QStringList& paths, bool recursive)
     m_folder.clear();
     m_collected.clear();
 
-    // A multi-selection (and the wrapper's explicit file list) still has a
-    // directory for the navigation bar. The host uses the directory itself for
-    // a single file; this is the fallback.
+    // The path bar names one folder; a batch that spans folders (a keyword
+    // search, or a multi-select) has none, and the rows carry their own folder
+    // instead. A single folder path still shows the folder it sits in, which is
+    // what "up" and "reload" work from.
     if (!paths.isEmpty())
+    {
         m_folder = QFileInfo(paths.first()).absolutePath();
+        for (const QString& path : paths)
+        {
+            if (QFileInfo(path).absolutePath().compare(m_folder, Qt::CaseInsensitive) != 0)
+            {
+                m_folder.clear();
+                break;
+            }
+        }
+    }
 
     // The wrapper opens an empty window to show the empty state. An empty
     // selection is not an enumeration error.
@@ -674,6 +690,7 @@ void Bridge::setSelection(const QStringList& paths, bool recursive)
         rename_core::ItemSnapshot snapshot;
         snapshot.id = entry.id;
         snapshot.leaf = entry.leaf;
+        snapshot.parent = entry.parent;
         snapshot.isFolder = entry.isFolder;
         snapshot.depth = entry.depth;
         snapshot.pathLength = entry.pathLength;
@@ -727,6 +744,7 @@ void Bridge::setFolder(const QString& folder, bool recursive)
         rename_core::ItemSnapshot snapshot;
         snapshot.id = entry.id;
         snapshot.leaf = entry.leaf;
+        snapshot.parent = entry.parent;
         snapshot.isFolder = entry.isFolder;
         snapshot.depth = entry.depth;
         snapshot.pathLength = entry.pathLength;

@@ -1,0 +1,15 @@
+started pid=89216 exe=D:\dev\github\winshun-dev\ra9fael.rename\dist\rename-menu-validation\plugin\rename.exe
+[  OK  ] initialize answered
+[  OK  ] initialize within 3000ms
+[  OK  ] initialize names the plugin
+initialize took 36 ms
+  <- {"id":1,"jsonrpc":"2.0","method":"winshun/tool","params":{"arguments":{"kind":"files","limit":200,"query":"zzz","size":false},"name":"search_files"}}
+        (asked for search_files)
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"openWindow":true},"icon":"ph:textbox","id":"batch.none","subtitle":"换个词再搜；回车打开空窗口","title":"没有匹配「zzz」的文件"}]
+[  OK  ] query answered
+query returned 1 item(s)
+   - [batch.none] 没有匹配「zzz」的文件  |  换个词再搜；回车打开空窗口
+[  OK  ] search said it found nothing
+[  OK  ] shutdown answered
+
+all checks passed

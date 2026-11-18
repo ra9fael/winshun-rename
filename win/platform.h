@@ -26,6 +26,7 @@ struct CollectedItem {
     std::string id;              // decimal, stable for the lifetime of the batch
     std::wstring fullPath;
     std::wstring leaf;
+    std::wstring parent;         // the folder it sits in; the plan compares targets within it
     bool isFolder = false;
     unsigned depth = 0;          // 0 for a directly selected item
     std::size_t pathLength = 0;

@@ -97,6 +97,7 @@ target_include_directories(rename PRIVATE "${CMAKE_SOURCE_DIR}")
 # an optional target (see RENAME_BUILD_QT below).
 add_library(rename_ui STATIC
     ui/presenter.cpp
+    ui/search_rows.cpp
 )
 target_include_directories(rename_ui PUBLIC "${CMAKE_SOURCE_DIR}")
 target_link_libraries(rename_ui PUBLIC rename_core)
@@ -128,7 +129,7 @@ endforeach()
 # The workspace convention (ra9fael.volume, cursorwrap, bright) is a zero-dependency
 # Catch2-style harness in tests/test_harness.h rather than an external framework.
 # rename_core has no OS dependency, so this target links only the C runtime.
-add_executable(rename_tests tests/test_core.cpp tests/test_presenter.cpp)
+add_executable(rename_tests tests/test_core.cpp tests/test_presenter.cpp tests/test_search_rows.cpp)
 target_link_libraries(rename_tests PRIVATE rename_core rename_ui)
 target_compile_definitions(rename_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 if(MSVC)
@@ -278,6 +279,12 @@ if(PWSH_EXECUTABLE)
     # TEST-SPEC.md LS-S10-01…03.
     add_test(NAME action_payload
              COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File "${CMAKE_SOURCE_DIR}/tools/check-action-payload.ps1")
+    # The result-menu switch is manifest-only: `triggers.files.if` names a bool
+    # setting and needs the 0.33.0 floor, and nothing in the plugin process can
+    # catch a missing `if` or a default of false. Grep states the contract
+    # exactly; WinShun docs/plugins.md, section 设置项.
+    add_test(NAME manifest_menu_switch
+             COMMAND "${PWSH_EXECUTABLE}" -NoProfile -File "${CMAKE_SOURCE_DIR}/tools/check-manifest.ps1")
 else()
     message(WARNING "pwsh not found: the core/ purity gate is not registered as a test")
 endif()

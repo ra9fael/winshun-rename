@@ -21,6 +21,21 @@ std::wstring Fold(std::wstring_view text)
     return out;
 }
 
+// The folder an entry sits in: two rows are only duplicates when their names
+// would land in one folder (a search-driven batch spans folders).
+std::wstring FolderOf(const std::wstring& path)
+{
+    std::wstring trimmed = path;
+    while (trimmed.size() > 1 && (trimmed.back() == L'\\' || trimmed.back() == L'/'))
+        trimmed.pop_back();
+    const std::size_t slash = trimmed.find_last_of(L"\\/");
+    if (slash == std::wstring::npos || slash == 0)
+        return {};
+    if (slash == 2 && trimmed.size() >= 3 && trimmed[1] == L':')
+        return trimmed.substr(0, 3); // "C:\"
+    return trimmed.substr(0, slash);
+}
+
 // "y" renames, "n" skips (the row stays in the batch's view but not in its set),
 // "d" deletes.
 bool Selected(const OilLine& line) { return line.state != OilState::Skip; }
@@ -34,8 +49,10 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
     std::vector<bool> seen(idTable.size(), false);
 
     // Windows comparison is case-insensitive, so duplicate detection must be too
-    // or "Report.txt" and "report.txt" would both be allowed (RNF-31).
-    std::vector<std::wstring> foldedNames;
+    // or "Report.txt" and "report.txt" would both be allowed (RNF-31). The
+    // folder is part of the key: the same name in another folder is not a
+    // duplicate, it is just another file.
+    std::vector<std::pair<std::wstring, std::wstring>> foldedNames;
     foldedNames.reserve(parsed.lines.size());
 
     std::vector<long long> seenIds;
@@ -66,13 +83,18 @@ std::vector<OilDiff> DiffOilBuffer(const OilParseResult& parsed,
             continue;
         }
 
+        const std::wstring folder = Fold(FolderOf(it->path));
         const std::wstring folded = Fold(line.leaf);
-        if (std::find(foldedNames.begin(), foldedNames.end(), folded) != foldedNames.end())
+        const auto clash = std::find_if(foldedNames.begin(), foldedNames.end(),
+            [&](const std::pair<std::wstring, std::wstring>& other) {
+                return other.first == folder && other.second == folded;
+            });
+        if (clash != foldedNames.end())
         {
             diffs.push_back({OilDiffKind::Rejected, line.id, {}, OilErrorKind::DuplicateName, line.line, Selected(line)});
             continue;
         }
-        foldedNames.push_back(folded);
+        foldedNames.emplace_back(folder, folded);
 
         if (line.leaf == it->originalLeaf)
             continue;   // untouched: no diff, no action
@@ -113,6 +135,7 @@ PreviewPlan BuildOilPlan(const std::wstring_view buffer,
     {
         PlanItem item;
         item.id = std::to_string(entry.id);
+        item.parent = FolderOf(entry.path);
         item.originalLeaf = entry.originalLeaf;
         item.targetLeaf = entry.originalLeaf;
         item.isFolder = entry.isFolder;

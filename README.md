@@ -1,16 +1,23 @@
 # 批量重命名（ra9fael.rename）
 
-Win顺 的批量重命名插件：选中一个文件夹（或同目录的一组项目），用规则链或文本缓冲区预览并改名。单文件改名请用 Win顺 自带的 F2。
+Win顺 的批量重命名插件：右键选中的文件或文件夹打开工作窗口，用规则链或文本缓冲区预览并改名。选中的项目就是窗口的输入集，选中一个文件夹改的是这个文件夹本身；文件夹里的项目从“在此文件夹批量重命名…”打开。单文件改名请用 Win顺 自带的 F2。
 
-**0.4.4 已发布。** 源码与 Release 在 [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename)，tag `v0.4.4` 对应 commit `5dbf8cb`：发布工作流从该 tag 在 windows-2022 上构建、跑测试、打包，再把 `.wsplugin` 附到 Release（[本轮记录](docs/validation/rename-release-20261117/README.md)）。
+**0.4.5 已发布。** 源码与 Release 在 [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename)，tag `v0.4.5` 对应 commit `046f77b`：发布工作流从该 tag 在 windows-2022 上构建、跑测试、打包，再把 `.wsplugin` 附到 Release。
 语言/文档互链：[English](README.en.md) · [设计与需求](plugin-design.md) · [界面规格](UI-SPEC.md) · [测试计划](TEST-PLAN.md) · [Vim 模式](docs/VIM-MODE.md)。
 
 ## 安装
 
 - 插件库：`Win顺 → 设置 → 插件 → 插件库`，搜“批量重命名”安装。
-- 手动：在 [v0.4.4 Release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.4) 下载 `ra9fael.rename-0.4.4.wsplugin`（同页有 `.sha256`）后安装。
+- 手动：在 [v0.4.5 Release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.5) 下载 `ra9fael.rename-0.4.5.wsplugin`（同页有 `.sha256`）后安装。
 
-需要 Win顺 0.22.0 或更高。包内带 `Qt6Widgets.dll`：Win顺 的共享 Qt 契约还没有 Qt Widgets，Qt 6.12 的其余部分由宿主提供。
+需要 Win顺 0.33.0 或更高：右键菜单的显示开关用的是 `triggers.files.if`，该版本起宿主才会读它。包内带 `Qt6Widgets.dll`：Win顺 的共享 Qt 契约还没有 Qt Widgets，Qt 6.12 的其余部分由宿主提供。
+
+## 入口
+
+- 右键：选中文件或文件夹，结果菜单里的“批量重命名…”打开窗口，窗口的输入集就是选中的这些项目。插件卡片上的“在文件结果右键菜单显示重命名”（默认开）只控制这一项；关掉后关键词入口照常，插件也不停用。
+- 当前文件夹：在某个文件夹里搜索结果时，第一行“在此文件夹批量重命名…”打开窗口，列出该文件夹的直接子项。
+- 关键词：输入 `br`、`pl`、`rename` 或“批量重命名”进入关键字模式。后面接着打名字，就是在 Win顺 的索引里按文件名搜索：第一行“批量重命名匹配的 N 项…”打开窗口改全部匹配，后面几行各打开一个文件；留空回车打开空窗口。
+- 跨目录也能一起改：批内同名只按同一个目录比较，不同目录的同名文件互不冲突；窗口里每行带自己的目录，悬停可看完整路径。
 
 ## 权限
 
@@ -19,6 +26,7 @@ Win顺 的批量重命名插件：选中一个文件夹（或同目录的一组�
 | `ui` | 插件自己的窗口：表格、规则栏、文本缓冲区 |
 | `files:read` | 列出选中目录的子项、读文件名与时间/大小属性（改名前后核对文件身份），以及元数据模板用到的图片元数据（只对 jpg/jpeg/png/tif/tiff/heic/heif/avif，先按扩展名筛选） |
 | `files:write` | 改名；删除经 Shell `IFileOperation` 移入回收站 |
+| `winshun:search` | 关键词后打名字时，用 Win顺 的文件名索引搜索（`search_files`，只读名字与路径） |
 
 不联网，不启动包外的程序，以普通权限运行。批量处理只改文件名，不改文件内容。
 
@@ -101,7 +109,7 @@ rename-ui.exe                                   # 空窗口
 
 ## 源码与构建
 
-本版本源码是 tag `v0.4.4`（commit `5dbf8cb`）。构建、测试并打包：
+本版本源码是 tag `v0.4.5`（commit `046f77b`）。构建、测试并打包：
 
 ```powershell
 git submodule update --init --recursive
@@ -112,7 +120,7 @@ ctest --test-dir build-qt --output-on-failure
 pwsh -File tools/pack.ps1 -BuildDir build-qt -OutDir dist
 ```
 
-`ctest` 是 6 个目标：`vim_qt`、`vim_window`、`rename_core`、`rename_e2e`、`core_purity`、`action_payload`；`vendor/vimcore` 自带的两套测试单独构建（`-DVIMCORE_BUILD_TESTS=ON`）。
+`ctest` 是 7 个目标：`vim_qt`、`vim_window`、`rename_core`、`rename_e2e`、`core_purity`、`action_payload`、`manifest_menu_switch`；`vendor/vimcore` 自带的两套测试单独构建（`-DVIMCORE_BUILD_TESTS=ON`）。
 
 发布由 `.github/workflows/release.yml` 完成：推一个 `v<版本>` tag，windows-2022 上装 Qt 6.12、构建、跑测试、用同一个 `pack.ps1` 打包，再把 `.wsplugin` 与它配对的 `.sha256` 附到 Release。`workflow_dispatch` 只验证、不发布。
 

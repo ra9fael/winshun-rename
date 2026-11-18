@@ -8,6 +8,20 @@
 
 namespace rename_core {
 
+namespace {
+
+// Two rows can only claim the same name when they land in the same folder: a
+// batch from a search may hold "A\X.txt" and "B\X.txt", and both renamed to
+// "Y.txt" never meet. Compared as written (NFC, no case folding): the rows come
+// from one enumeration, so two spellings of one folder are not a case the plan
+// has to decide — the filesystem already refused or accepted those names.
+bool SameFolder(const PlanItem& a, const PlanItem& b)
+{
+    return NfcEqual(a.parent, b.parent);
+}
+
+} // namespace
+
 std::uint64_t NextPlanId()
 {
     // Process-wide monotonic counter. Deliberately not thread-safe: plans are
@@ -32,6 +46,7 @@ PreviewPlan BuildControlPlan(const std::vector<ItemSnapshot>& items,
     {
         PlanItem item;
         item.id = snapshot.id;
+        item.parent = snapshot.parent;
         item.originalLeaf = snapshot.leaf;
         item.targetLeaf = snapshot.leaf;
         item.isFolder = snapshot.isFolder;
@@ -105,7 +120,7 @@ PreviewPlan BuildControlPlan(const std::vector<ItemSnapshot>& items,
 
     std::vector<bool> blocked(count, false);
 
-    // Pass 1: two rows want the same leaf.
+    // Pass 1: two rows want the same leaf in the same folder.
     for (std::size_t i = 0; i < count; ++i)
     {
         if (!readyBefore[i])
@@ -114,7 +129,8 @@ PreviewPlan BuildControlPlan(const std::vector<ItemSnapshot>& items,
         {
             if (!readyBefore[j])
                 continue;
-            if (NfcEqual(plan.items[i].targetLeaf, plan.items[j].targetLeaf))
+            if (SameFolder(plan.items[i], plan.items[j]) &&
+                NfcEqual(plan.items[i].targetLeaf, plan.items[j].targetLeaf))
             {
                 blocked[i] = true;
                 blocked[j] = true;
@@ -140,6 +156,10 @@ PreviewPlan BuildControlPlan(const std::vector<ItemSnapshot>& items,
             if (i == j)
                 continue;
             if (!NfcEqual(plan.items[i].targetLeaf, plan.items[j].originalLeaf))
+                continue;
+            // Only a row in the same folder can free or hold that name: two
+            // folders' files never share one.
+            if (!SameFolder(plan.items[i], plan.items[j]))
                 continue;
             if (!readyBefore[j])
             {

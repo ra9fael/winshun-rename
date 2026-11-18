@@ -35,6 +35,7 @@ public:
         IdRole = Qt::UserRole + 1,
         OriginalRole,
         TargetRole,
+        ParentRole,
         StatusRole,
         SelectedRole,
         IsFolderRole,

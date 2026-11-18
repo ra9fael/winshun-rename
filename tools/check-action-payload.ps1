@@ -4,15 +4,14 @@
 #
 # Why this is a gate and not a note. A row's own fields live in `data`, and the
 # host hands the item back as it came (WinShun Items.cpp::itemToJson). So the
-# JSON `action()` receives carries `data.batch` / `data.openFolder`, never
-# `batch` / `openFolder` at the top. Reading only the top level does not fail
+# JSON `action()` receives carries `data.openPaths` / `data.openFolder`, never
+# `openPaths` / `openFolder` at the top. Reading only the top level does not fail
 # loudly: it answers "No files selected" to a row that plainly carried a batch,
 # which looks like a UI problem and is not.
 #
 # This is a source check rather than a runtime one because the contract is
 # "where the code looks", which a grep states exactly and a unit test can only
-# sample. LS-S10-01…03 in TEST-SPEC.md are the behavioural halves.
-#
+# sample. LS-S10-01…03 in TEST-SPEC.md are the behavioural halves.#
 # Usage: pwsh -File tools/check-action-payload.ps1
 # Exit:  0 = clean, 1 = violation
 
@@ -39,7 +38,7 @@ if ($text -notmatch 'const\s+winshun::Json\s+payload\s*=\s*a\.item\["data"\]')
 # 2. Nothing in action() may read a payload field off a.item directly. Matched
 #    only for the keys the plugin itself puts in `data`, so unrelated top-level
 #    reads (id, title) stay legal.
-foreach ($key in @('batch', 'openFolder', 'openWindow'))
+foreach ($key in @('openPaths', 'openPath', 'openFolder', 'openWindow'))
 {
     if ($text -match ('a\.item\["' + $key + '"\]'))
     {
@@ -49,7 +48,7 @@ foreach ($key in @('batch', 'openFolder', 'openWindow'))
 
 # 3. The keys have to be published in `data`: an action can only receive what
 #    the row carried. One `withData` object per row must mention each key used.
-foreach ($key in @('openFolder', 'openWindow'))
+foreach ($key in @('openPaths', 'openPath', 'openFolder', 'openWindow'))
 {
     if ($text -notmatch ('"' + $key + '"\s*,'))
     {

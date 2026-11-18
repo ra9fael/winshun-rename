@@ -40,6 +40,9 @@ struct Row {
     std::string id;
     std::wstring originalLeaf;
     std::wstring targetLeaf;
+    // Set only when the batch spans folders (a search-driven selection): the
+    // folder this row names, so the table can tell two same-named files apart.
+    std::wstring parent;
     rename_core::Status status = rename_core::Status::Init;
     rename_core::Action action = rename_core::Action::Rename;
     bool selected = true;

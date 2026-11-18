@@ -586,6 +586,54 @@ TEST_CASE(PlanWaitsForTheRowThatFreesItsTarget)
     CHECK(recorded);
 }
 
+TEST_CASE(PlanComparesTargetsWithinOneFolder)
+{
+    // A keyword search can hand the batch two folders' files with the same
+    // name. They never meet: renaming both to one name is not a conflict.
+    const RuleChain chain = singleRule(Scope::Name, L".*", L"same", MatchType::Regex, Occurrence::All);
+    std::vector<ItemSnapshot> items = {item(L"one.txt"), item(L"one.txt")};
+    items[0].id = "1";
+    items[0].parent = L"D:\\A";
+    items[1].id = "2";
+    items[1].parent = L"D:\\B";
+
+    const PreviewPlan plan = BuildControlPlan(items, chain, 0, NextPlanId());
+    CHECK_EQ(plan.CountByStatus(Status::Ready), 2);
+    CHECK(!plan.HasBlockingError());
+}
+
+TEST_CASE(PlanKeepsDependenciesInsideTheirFolder)
+{
+    // The window's own case ("报告" -> "2026报告") across two folders: row 1
+    // takes a name that row 3 frees in the same folder, so it waits for row 3.
+    // Row 2 holds the same name in another folder: it neither frees nor holds
+    // that target, and must not be the row recorded (the old leaf-only
+    // comparison picked whichever came first, folder or not).
+    std::vector<ItemSnapshot> items = {item(L"报告.pdf"), item(L"2026报告.pdf"), item(L"2026报告.pdf")};
+    items[0].id = "1";
+    items[0].parent = L"D:\\A";
+    items[1].id = "2";
+    items[1].parent = L"D:\\B";
+    items[2].id = "3";
+    items[2].parent = L"D:\\A";
+
+    const RuleChain chain = singleRule(Scope::Name, L"报告", L"2026报告", MatchType::Literal,
+                                       Occurrence::All);
+    const PreviewPlan plan = BuildControlPlan(items, chain, 0, NextPlanId());
+
+    bool blocked = false;
+    std::string waitsFor;
+    for (const PlanItem& row : plan.items)
+    {
+        if (row.status == Status::ErrorAlreadyExists)
+            blocked = true;
+        if (row.id == "1")
+            waitsFor = row.waitsForId;
+    }
+    CHECK(!blocked);
+    CHECK_EQ(waitsFor, std::string("3"));
+}
+
 TEST_CASE(PlanMarksUnchangedWhenNoRuleMatches)
 {
     const RuleChain chain = singleRule(Scope::Name, L"zzz", L"yyy");

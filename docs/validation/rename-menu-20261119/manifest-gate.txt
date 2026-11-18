@@ -1,0 +1,44 @@
+manifest: clean
+---- no-if
+manifest: VIOLATION
+  - rename: files trigger has no "if", so the menu cannot be hidden
+
+A bool setting with "default": true, named by triggers.files.if, and
+minWinShun >= 0.33.0 is what makes the menu switch real.
+exit=1
+---- default-false
+manifest: VIOLATION
+  - rename: "showInFileMenu" defaults to False; the entry would start hidden
+
+A bool setting with "default": true, named by triggers.files.if, and
+minWinShun >= 0.33.0 is what makes the menu switch real.
+exit=1
+---- not-bool
+manifest: VIOLATION
+  - rename: files.if names "showInFileMenu", a text setting; the host only accepts bool
+
+A bool setting with "default": true, named by triggers.files.if, and
+minWinShun >= 0.33.0 is what makes the menu switch real.
+exit=1
+---- floor-0.32.0
+manifest: VIOLATION
+  - minWinShun is 0.32.0; a host before 0.33.0 ignores files.if, so the switch would not take effect
+
+A bool setting with "default": true, named by triggers.files.if, and
+minWinShun >= 0.33.0 is what makes the menu switch real.
+exit=1
+---- wrong-key
+manifest: VIOLATION
+  - rename: files.if names "showInMenu", which is not a declared setting
+
+A bool setting with "default": true, named by triggers.files.if, and
+minWinShun >= 0.33.0 is what makes the menu switch real.
+exit=1
+---- no-search-permission
+manifest: VIOLATION
+  - main.cpp asks for search_files, but the manifest does not declare winshun:search
+
+A bool setting with "default": true, named by triggers.files.if, and
+minWinShun >= 0.33.0 is what makes the menu switch real.
+exit=1
+all 6 variants refused

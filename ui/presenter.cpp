@@ -248,12 +248,26 @@ void Presenter::RefreshRows()
     m_rows.clear();
     m_rows.reserve(m_plan.items.size());
 
+    // One-folder batches keep the leaf-only column; a batch that spans folders
+    // (a keyword search, or a multi-select) puts each row's folder on it, or
+    // two files called "报告.txt" would look like the same row twice.
+    std::vector<std::wstring> folders;
+    for (const rename_core::PlanItem& item : m_plan.items)
+    {
+        const auto known = std::find_if(folders.begin(), folders.end(),
+            [&](const std::wstring& folder) { return rename_core::NfcEqual(folder, item.parent); });
+        if (known == folders.end())
+            folders.push_back(item.parent);
+    }
+    const bool showParent = folders.size() > 1;
+
     for (const rename_core::PlanItem& item : m_plan.items)
     {
         Row row;
         row.id = item.id;
         row.originalLeaf = item.originalLeaf;
         row.targetLeaf = item.targetLeaf;
+        row.parent = showParent ? item.parent : std::wstring();
         row.status = item.status;
         row.action = item.action;
         row.selected = item.selected;

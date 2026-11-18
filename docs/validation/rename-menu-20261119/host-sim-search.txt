@@ -1,0 +1,30 @@
+started pid=81860 exe=D:\dev\github\winshun-dev\ra9fael.rename\dist\rename-menu-validation\plugin\rename.exe
+[  OK  ] initialize answered
+[  OK  ] initialize within 3000ms
+[  OK  ] initialize names the plugin
+initialize took 97 ms
+  <- {"id":1,"jsonrpc":"2.0","method":"winshun/tool","params":{"arguments":{"folders":["C:\\Users\\renfei\\AppData\\Local\\Temp\\opencode\\rename-search2\\span"],"ki
+        (asked for search_files)
+[  OK  ] search kept the folder scope
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"openPaths":["C:\\Users\\renfei\\AppData\\Local\\Temp\\opencode\\rename-search2\\span\\a\\same.txt","C:\\Use
+[  OK  ] query answered
+query returned 3 item(s)
+   - [batch.all] 批量重命名匹配的 2 项…  |  搜索：same
+   - [batch.one] same.txt  |  C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\a
+   - [batch.one] same.txt  |  C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\b
+[  OK  ] search returned a batch row
+[  OK  ] search returned per-file rows
+[  OK  ] batch row carries every match
+[  OK  ] batch row answered
+[  OK  ] batch row opened the window on the matches
+[  OK  ] shutdown answered
+--- stderr ---
+[rename] window: count=2
+[rename]   C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\a\same.txt
+[rename]   C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\b\same.txt
+
+[  OK  ] search batch received the matches
+[  OK  ] search batch received C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\a\same.txt
+[  OK  ] search batch received C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\b\same.txt
+
+all checks passed

@@ -13,9 +13,11 @@
 // answers queries without a window. That is not a degraded build: it is what
 // makes the whole pipeline testable on a machine with no Qt installed, and it is
 // why every decision lives in core/ and presenter.cpp rather than here.
+#include "ui/search_rows.h"
 #include "win/platform.h"
 #include "winshun.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cwchar>
 #include <string>
@@ -56,38 +58,14 @@ std::string Narrow(const std::wstring& text)
     return out;
 }
 
-bool IsDirectory(const std::wstring& path)
+// The words after the keyword, without the spaces a user may have typed.
+std::string Trim(const std::string& text)
 {
-    const DWORD attributes = ::GetFileAttributesW(path.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-}
-
-std::wstring ParentOf(std::wstring path)
-{
-    while (path.size() > 1 && (path.back() == L'\\' || path.back() == L'/'))
-        path.pop_back();
-    const std::size_t slash = path.find_last_of(L"\\/");
-    if (slash == std::wstring::npos || slash == 0)
+    const std::size_t first = text.find_first_not_of(' ');
+    if (first == std::string::npos)
         return {};
-    if (slash == 2 && path.size() >= 3 && path[1] == L':')
-        return path.substr(0, 3); // "C:\"
-    return path.substr(0, slash);
-}
-
-bool SameParent(const std::vector<std::wstring>& paths)
-{
-    std::wstring parent;
-    for (const std::wstring& path : paths)
-    {
-        const std::wstring current = ParentOf(path);
-        if (current.empty())
-            return false;
-        if (parent.empty())
-            parent = current;
-        else if (::_wcsicmp(parent.c_str(), current.c_str()) != 0)
-            return false;
-    }
-    return !parent.empty();
+    const std::size_t last = text.find_last_not_of(' ');
+    return text.substr(first, last - first + 1);
 }
 
 class RenamePlugin : public winshun::Plugin
@@ -131,6 +109,13 @@ protected:
         const std::string browsed = q.filters["folder"].isString()
             ? q.filters["folder"].toString() : std::string();
 
+        // Words after `rename` are a name search: the keyword box is WinShun's
+        // own search interface, so the plugin asks WinShun's index instead of
+        // opening an empty window and leaving the user to browse to a folder.
+        const std::string words = Trim(q.text);
+        if (!words.empty())
+            return SearchRows(words, browsed, q.limit, zh);
+
         winshun::Items rows;
         if (!browsed.empty())
         {
@@ -147,8 +132,8 @@ protected:
         {
             winshun::Item hint("batch.hint",
                 zh ? "打开批量重命名…" : "Open Batch Rename…",
-                zh ? "按 Enter 打开窗口；窗口里可以选择文件夹"
-                   : "Press Enter to open the window; choose a folder there");
+                zh ? "按 Enter 打开窗口；窗口里可以选择文件夹。在 rename 后面打名字可以直接搜索"
+                   : "Press Enter to open the window and choose a folder there; type a name after rename to search");
             hint.withIcon("ph:textbox");
             hint.withData(winshun::Json::Object {{"openWindow", true}});
             rows.push_back(std::move(hint));
@@ -183,17 +168,19 @@ protected:
 #endif
         }
 
+        // A row from the keyword list: the whole match set, or one file. Both
+        // become the window's input set exactly as a right-click selection does.
+        std::vector<std::wstring> chosen;
+        for (const winshun::Json& path : payload["openPaths"].toArray())
+            if (!path.toString().empty())
+                chosen.push_back(Widen(path.toString()));
+        if (payload["openPath"].isString() && !payload["openPath"].toString().empty())
+            chosen.push_back(Widen(payload["openPath"].toString()));
+        if (!chosen.empty())
+            return ShowSelection(chosen);
+
         if (a.trigger != "files" || a.files.empty())
             return {winshun::effect::notify(chinese() ? "没有选中文件或文件夹" : "No file or folder selected")};
-
-        std::size_t characters = 0;
-        for (const std::string& path : a.files)
-            characters += path.size();
-        std::fprintf(stderr, "[rename] files trigger: count=%zu chars=%zu\n",
-                     a.files.size(), characters);
-        for (const std::string& path : a.files)
-            std::fprintf(stderr, "[rename]   %s\n", path.c_str());
-        std::fflush(stderr);
 
         std::vector<std::wstring> paths;
         paths.reserve(a.files.size());
@@ -201,34 +188,17 @@ protected:
             paths.push_back(Widen(path));
 
 #ifdef RENAME_HAVE_QT
-        if (paths.size() == 1)
-        {
-            // One folder: its contents. One file: the files beside it.
-            if (IsDirectory(paths.front()))
-            {
-                rename_host::ShowFolder(paths.front(), false);
-            }
-            else
-            {
-                const std::wstring parent = ParentOf(paths.front());
-                if (parent.empty())
-                    return {winshun::effect::notify(chinese() ? "找不到所在文件夹" : "The parent folder is unknown")};
-                rename_host::ShowFolder(parent, false);
-            }
-        }
-        else
-        {
-            // The current host builds the menu from the manifest alone and has
-            // no per-path filter, so the entry is visible for any multi-select.
-            // Refuse a cross-folder selection here rather than guessing which
-            // folder the user meant.
-            if (!SameParent(paths))
-                return {winshun::effect::notify(chinese()
-                    ? "请选择同一目录下的文件或文件夹"
-                    : "Select files or folders in one directory")};
-            rename_host::Show(paths, false); // exactly the selected items
-        }
-        return {winshun::effect::hide()};
+        // The selection is the input set: one file, one folder and a mixed
+        // group mean the same thing, so the window shows exactly these paths
+        // instead of scanning a parent folder or listing a folder's contents.
+        // A folder's contents come from the "Batch rename in this folder" row
+        // shown while searching inside it, which routes to ShowFolder.
+        //
+        // Paths from more than one folder are fine: the plan compares targets
+        // per folder (core/plan.cpp), so same-named files in different folders
+        // neither conflict nor wait for each other. That is what makes a
+        // search-driven batch possible at all.
+        return ShowSelection(paths);
 #else
         return {winshun::effect::notify(chinese()
             ? "批量重命名需要带 Qt 的构建"
@@ -243,6 +213,103 @@ protected:
     }
 
 private:
+    // Rows for `rename <words>`: WinShun's own index answers, the first row
+    // opens the batch on every match, then the first few matches on their own.
+    // `folder` is the scope the launcher is searching in (WinShun's
+    // `filters.folder`), so the search stays inside it when there is one.
+    // Runs on the protocol thread, the only thread Plugin::tool() may be used
+    // from (it reads its answer off the same stream serve() does).
+    winshun::Items SearchRows(const std::string& words, const std::string& folder, int limit, bool zh)
+    {
+        winshun::Json::Array scope;
+        if (!folder.empty())
+            scope.push_back(folder);
+        winshun::Json arguments = winshun::Json::Object {
+            {"query", words},
+            {"kind", "files"},   // a folder is reached from its own row, not a search hit
+            {"size", false},     // names only: sizes would go to disk on every keystroke
+            {"limit", std::min(limit, 200)},
+        };
+        if (!scope.empty())
+            arguments.set("folders", winshun::Json(std::move(scope)));
+        const winshun::Json answer = tool("search_files", std::move(arguments));
+        if (answer["error"].isObject())
+        {
+            std::fprintf(stderr, "[rename] search failed: %s\n",
+                         answer["error"]["message"].toString().c_str());
+            std::fflush(stderr);
+            winshun::Item failed("batch.unavailable",
+                zh ? "搜索不可用" : "Search is unavailable",
+                zh ? "Win顺 没有给出索引；用文件夹或结果菜单打开窗口"
+                   : "Win顺 gave no index; open the window from a folder or the result menu");
+            failed.withIcon("ph:textbox");
+            return {std::move(failed)};
+        }
+
+        std::vector<rename_ui::SearchHit> hits;
+        for (const winshun::Json& item : answer["items"].toArray())
+        {
+            const std::string path = item["path"].toString();
+            if (path.empty())
+                continue;
+            hits.push_back({path, item["name"].toString()});
+        }
+
+        if (hits.empty())
+        {
+            winshun::Item none("batch.none",
+                zh ? "没有匹配「" + words + "」的文件" : "No file matches \"" + words + "\"",
+                zh ? "换个词再搜；回车打开空窗口" : "Try other words; Enter opens an empty window");
+            none.withIcon("ph:textbox");
+            none.withData(winshun::Json::Object {{"openWindow", true}});
+            return {std::move(none)};
+        }
+
+        winshun::Items rows;
+        for (const rename_ui::SearchRow& row : rename_ui::BuildSearchRows(words, hits,
+                 answer["truncated"].toBool(false), zh))
+        {
+            const bool all = row.kind == rename_ui::SearchRow::Kind::All;
+            winshun::Item item(all ? "batch.all" : "batch.one", row.title, row.subtitle);
+            item.withIcon(all ? "ph:textbox" : "ph:file-text");
+            winshun::Json data = winshun::Json::Object {};
+            if (all)
+            {
+                winshun::Json::Array paths;
+                for (const std::string& path : row.paths)
+                    paths.push_back(path);
+                data.set("openPaths", winshun::Json(std::move(paths)));
+            }
+            else
+            {
+                data.set("openPath", row.paths.front());
+            }
+            item.withData(std::move(data));
+            item.withScore(all ? 100 : 90);
+            rows.push_back(std::move(item));
+        }
+        return rows;
+    }
+
+    // Every entry ends here: the paths the host named become the window's input
+    // set. The log lists each path, which is the record that the selection
+    // arrived whole (tools/host-sim.ps1 reads it back).
+    winshun::Effects ShowSelection(const std::vector<std::wstring>& paths)
+    {
+        std::fprintf(stderr, "[rename] window: count=%zu\n", paths.size());
+        for (const std::wstring& path : paths)
+            std::fprintf(stderr, "[rename]   %s\n", Narrow(path).c_str());
+        std::fflush(stderr);
+#ifdef RENAME_HAVE_QT
+        rename_host::Show(paths, false);
+        return {winshun::effect::hide()};
+#else
+        return {winshun::effect::notify(chinese()
+            ? "批量重命名需要带 Qt 的构建"
+            : "Batch Rename needs the Qt build")};
+#endif
+    }
+
 #ifdef RENAME_HAVE_QT
     // The host's look, as `appearance()` says it now. `nativeLook` is passed as
     // compact JSON rather than a Qt type so this file stays Qt-free when the

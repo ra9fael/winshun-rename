@@ -1,16 +1,23 @@
 # Batch Rename (ra9fael.rename)
 
-A batch-rename plugin for Win顺: pick a folder (or a same-directory selection), preview the result built from a rule chain or a text buffer, then rename. For a single file, use Win顺's own F2.
+A batch-rename plugin for Win顺: right-click selected files or folders to open the work window, preview the result built from a rule chain or a text buffer, then rename. The selection is the window's input set, so a selected folder is renamed itself; a folder's contents come from "Batch rename in this folder". For a single file, use Win顺's own F2.
 
-**0.4.4 is released.** Source and releases live at [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename); tag `v0.4.4` is commit `5dbf8cb`. The release workflow builds that tag on windows-2022, runs the tests, packages, and attaches the `.wsplugin` to the release ([this round's record](docs/validation/rename-release-20261117/README.md)).
+**0.4.5 is released.** Source and releases live at [ra9fael/winshun-rename](https://github.com/ra9fael/winshun-rename); tag `v0.4.5` is commit `046f77b`. The release workflow builds that tag on windows-2022, runs the tests, packages, and attaches the `.wsplugin` to the release.
 Language/document links: [中文](README.md) · [Design and requirements](plugin-design.en.md) · [UI specification](UI-SPEC.en.md) · [Test plan](TEST-PLAN.en.md) · [Vim mode](docs/VIM-MODE.md).
 
 ## Installing
 
 - Plugin library: `Win顺 → Settings → Plugins → Plugin library`, search for "Batch Rename".
-- Manually: download `ra9fael.rename-0.4.4.wsplugin` from the [v0.4.4 release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.4) (a `.sha256` sits beside it) and install it.
+- Manually: download `ra9fael.rename-0.4.5.wsplugin` from the [v0.4.5 release](https://github.com/ra9fael/winshun-rename/releases/tag/v0.4.5) (a `.sha256` sits beside it) and install it.
 
-Requires Win顺 0.22.0 or newer. The package carries `Qt6Widgets.dll`: WinShun's shared-Qt contract does not include Qt Widgets yet, and the host supplies the rest of Qt 6.12.
+Requires Win顺 0.33.0 or newer: the result-menu switch uses `triggers.files.if`, which hosts read from that version on. The package carries `Qt6Widgets.dll`: WinShun's shared-Qt contract does not include Qt Widgets yet, and the host supplies the rest of Qt 6.12.
+
+## Entries
+
+- Right-click: select files or folders and use "Batch rename…" in the result menu; the window's input set is exactly those items. The plugin card's "Show Rename in file result menus" (on by default) governs that entry only — keywords keep working with it off, and the plugin stays enabled.
+- Current folder: while searching inside a folder, the first row "Batch rename in this folder…" opens the window on that folder's direct children.
+- Keywords: `br`, `pl`, `rename` or 批量重命名 enter keyword mode. Typing a name after it searches WinShun's index by file name: the first row "Batch rename the N matches…" opens the window on every match and the rows after it open one file each; Enter on an empty keyword opens an empty window.
+- Batches may span folders: duplicate-name detection compares within one folder only, so same-named files in different folders do not conflict; each row carries its folder, and the tooltip has the whole path.
 
 ## Permissions
 
@@ -19,6 +26,7 @@ Requires Win顺 0.22.0 or newer. The package carries `Qt6Widgets.dll`: WinShun's
 | `ui` | The plugin's own window: table, rule column, text buffer |
 | `files:read` | List the selected folder's entries, read names and size/write-time attributes (to verify file identity before and after), and the image metadata that metadata templates use (jpg/jpeg/png/tif/tiff/heic/heif/avif only, screened by extension first) |
 | `files:write` | Rename; deletes go through Shell `IFileOperation` to the Recycle Bin |
+| `winshun:search` | Searching WinShun's file-name index when a name follows the keyword (`search_files`; names and paths only) |
 
 No network, no launching programs outside the package, ordinary user rights. A batch changes file names, never file contents.
 
@@ -101,7 +109,7 @@ Execution design explicitly handles cancellation, name swaps, parent/child direc
 
 ## Source and build
 
-This version's source is tag `v0.4.4` (commit `5dbf8cb`). Build, test and package:
+This version's source is tag `v0.4.5` (commit `046f77b`). Build, test and package:
 
 ```powershell
 git submodule update --init --recursive
@@ -112,7 +120,7 @@ ctest --test-dir build-qt --output-on-failure
 pwsh -File tools/pack.ps1 -BuildDir build-qt -OutDir dist
 ```
 
-`ctest` is six targets: `vim_qt`, `vim_window`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`. `vendor/vimcore` ships its own two suites, built separately (`-DVIMCORE_BUILD_TESTS=ON`).
+`ctest` is seven targets: `vim_qt`, `vim_window`, `rename_core`, `rename_e2e`, `core_purity`, `action_payload`, `manifest_menu_switch`. `vendor/vimcore` ships its own two suites, built separately (`-DVIMCORE_BUILD_TESTS=ON`).
 
 Release is `.github/workflows/release.yml`: push a `v<version>` tag, and windows-2022 installs Qt 6.12, builds, runs the tests, packages with the same `pack.ps1`, and attaches the `.wsplugin` plus its paired `.sha256` to the release. `workflow_dispatch` only verifies, never publishes.
 

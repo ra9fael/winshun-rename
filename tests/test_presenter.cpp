@@ -402,6 +402,34 @@ TEST_CASE(PresenterOilClipboardRoundTrips)
     CHECK_EQ(presenter.CurrentCounts().unchanged, 2);
 }
 
+TEST_CASE(PresenterShowsTheFolderOnlyForAFolderSpanningBatch)
+{
+    // A keyword search hands over files from several folders: two rows named
+    // the same would otherwise look like one row twice. One-folder batches keep
+    // the clean leaf-only column (the path bar already says where they are).
+    Presenter presenter;
+    ControlState control;
+    control.chain = renameRule(L"a", L"b");
+    presenter.SetControlState(control);
+
+    std::vector<ItemSnapshot> spanning = {item("1", L"a.txt"), item("2", L"a.txt")};
+    spanning[0].parent = L"D:\\A";
+    spanning[1].parent = L"D:\\B";
+    presenter.SetItems(spanning);
+
+    const std::vector<Row> rows = presenter.VisibleRows();
+    CHECK_EQ(rows.size(), std::size_t(2));
+    CHECK_EQ(rows[0].parent, std::wstring(L"D:\\A"));
+    CHECK_EQ(rows[1].parent, std::wstring(L"D:\\B"));
+
+    std::vector<ItemSnapshot> oneFolder = {item("1", L"a.txt"), item("2", L"b.txt")};
+    oneFolder[0].parent = L"D:\\A";
+    oneFolder[1].parent = L"D:\\A";
+    presenter.SetItems(oneFolder);
+    for (const Row& row : presenter.VisibleRows())
+        CHECK(row.parent.empty());
+}
+
 TEST_CASE(PresenterExtensionlessFileNote)
 {
     // The "no extension; extension rule not applied" explanation is design §3.5

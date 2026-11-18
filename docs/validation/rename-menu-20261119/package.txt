@@ -1,0 +1,6 @@
+package: D:\dev\github\winshun-dev\ra9fael.rename\dist\rename-menu-validation\ra9fael.rename-0.5.0.wsplugin
+size:    3,642,655 bytes
+sha256:  44198d1a5d93edc19398f3a67491f843532c4ca14ad9a463be11dce9881d1c1c
+
+size:    3,642,655 bytes
+sha256:  44198d1a5d93edc19398f3a67491f843532c4ca14ad9a463be11dce9881d1c1c

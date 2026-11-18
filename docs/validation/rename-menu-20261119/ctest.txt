@@ -1,0 +1,20 @@
+Internal ctest changing into directory: D:/dev/github/winshun-dev/ra9fael.rename/build-qt
+Test project D:/dev/github/winshun-dev/ra9fael.rename/build-qt
+    Start 1: vim_qt
+1/7 Test #1: vim_qt ...........................   Passed    0.07 sec
+    Start 2: vim_window
+2/7 Test #2: vim_window .......................   Passed   14.31 sec
+    Start 3: rename_core
+3/7 Test #3: rename_core ......................   Passed    0.01 sec
+    Start 4: rename_e2e
+4/7 Test #4: rename_e2e .......................   Passed    1.22 sec
+    Start 5: core_purity
+5/7 Test #5: core_purity ......................   Passed    0.47 sec
+    Start 6: action_payload
+6/7 Test #6: action_payload ...................   Passed    0.40 sec
+    Start 7: manifest_menu_switch
+7/7 Test #7: manifest_menu_switch .............   Passed    0.47 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Total Test time (real) =  16.97 sec

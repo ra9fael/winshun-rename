@@ -36,6 +36,21 @@ std::wstring LeafOf(const std::wstring& path)
     return path.substr(slash + 1, end - slash - 1);
 }
 
+// The folder a path sits in. The plan compares targets within one folder, so
+// this is the identity of "where this row will land" (core/plan.cpp).
+std::wstring FolderOf(const std::wstring& path)
+{
+    std::wstring trimmed = path;
+    while (trimmed.size() > 1 && (trimmed.back() == L'\\' || trimmed.back() == L'/'))
+        trimmed.pop_back();
+    const std::size_t slash = trimmed.find_last_of(L"\\/");
+    if (slash == std::wstring::npos || slash == 0)
+        return {};
+    if (slash == 2 && trimmed.size() >= 3 && trimmed[1] == L':')
+        return trimmed.substr(0, 3); // "C:\"
+    return trimmed.substr(0, slash);
+}
+
 bool IsDirectory(const std::wstring& path)
 {
     const DWORD attributes = ::GetFileAttributesW(path.c_str());
@@ -119,6 +134,7 @@ void ListChildren(const std::wstring& folder,
         entry.id = std::to_string(++counter);
         entry.fullPath = child;
         entry.leaf = name;
+        entry.parent = base;
         entry.isFolder = childIsFolder;
         // Depth 0 for everything: a folder's children have no parent *in this
         // batch*, so renaming the folder must not reorder around them.
@@ -193,6 +209,7 @@ void CollectInto(const std::wstring& root,
         entry.id = std::to_string(++counter);
         entry.fullPath = root;
         entry.leaf = LeafOf(root);
+        entry.parent = FolderOf(root);
         entry.isFolder = IsDirectory(root);
         entry.depth = depth;
         entry.pathLength = root.size();
@@ -239,6 +256,7 @@ void CollectInto(const std::wstring& root,
         entry.id = std::to_string(++counter);
         entry.fullPath = child;
         entry.leaf = name;
+        entry.parent = FolderOf(child);
         entry.isFolder = childIsFolder;
         entry.depth = depth + 1;
         entry.pathLength = child.size();
@@ -282,6 +300,12 @@ EnumerateResult Enumerate(const EnumerateRequest& request)
             continue;
         CollectInto(root, {}, 0, request.recursive, request.listContents, result, seen, counter);
     }
+
+    // A blocked set is returned empty even when earlier roots were read: those
+    // rows are not the selection the user made, and a caller that took them
+    // would work on half a batch without saying so.
+    if (result.blocked)
+        result.items.clear();
 
     return result;
 }

@@ -6,11 +6,11 @@
     "zh": "批量重命名",
     "en": "Batch Rename"
   },
-  "version": "0.4.5",
-  "minWinShun": "0.22.0",
+  "version": "0.5.0",
+  "minWinShun": "0.33.0",
   "description": {
-    "zh": "批量重命名：选中一个文件夹或同目录的一组项目，按规则或文本方式预览并改名。单文件改名请用 Win顺 的 F2。",
-    "en": "Batch rename a folder or a same-directory selection with rules or a text buffer. Use WinShun F2 for a single file."
+    "zh": "批量重命名：按规则或文本方式预览并改名选中的项目；选中一个文件夹改的是这个文件夹本身。文件夹里的项目用“在此文件夹批量重命名”打开。单文件改名请用 Win顺 的 F2。",
+    "en": "Batch rename the selected items with rules or a text buffer; a selected folder is renamed itself. For a folder's contents, use Batch rename in this folder. Use WinShun F2 for a single file."
   },
   "author": "ra9fael",
   "homepage": "https://github.com/ra9fael/winshun-rename",
@@ -30,7 +30,19 @@
   "permissions": [
     "ui",
     "files:read",
-    "files:write"
+    "files:write",
+    "winshun:search"
+  ],
+  "settings": [
+    {
+      "key": "showInFileMenu",
+      "type": "bool",
+      "title": {
+        "zh": "在文件结果右键菜单显示重命名",
+        "en": "Show Rename in file result menus"
+      },
+      "default": true
+    }
   ],
   "commands": [
     {
@@ -46,19 +58,20 @@
         "en": "Batch Rename"
       },
       "description": {
-        "zh": "选中文件或文件夹后右键，打开批量重命名窗口；文件夹读取其中内容，文件读取同级目录。",
-        "en": "Select a file or folder and right-click; a folder opens its contents, a file opens its siblings."
+        "zh": "选中文件或文件夹后右键，打开批量重命名窗口；窗口里就是选中的这些项目。在 br / rename 后面打名字，可以直接在 Win顺 的搜索结果里批量重命名。",
+        "en": "Select files or folders and right-click; the batch window takes exactly those items. Type a name after br / rename to rename matches from WinShun's own search."
       },
       "icon": "ph:textbox",
       "hint": {
-        "zh": "选中文件或文件夹，或输入 br",
-        "en": "select a file or folder, or type br"
+        "zh": "选中文件或文件夹，或输入 br 后打名字搜索",
+        "en": "select a file or folder, or type br and then a name to search"
       },
       "triggers": [
         {
           "files": {
             "kind": "any",
             "max": 1000,
+            "if": "showInFileMenu",
             "title": {
               "zh": "批量重命名…",
               "en": "Batch rename…"

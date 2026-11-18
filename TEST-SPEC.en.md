@@ -127,6 +127,8 @@ IDs are `LS-<layer>-<n>`. Each must be executable, asserted, and leave a file be
 | LS-S7-07 | A root that does not exist | `blocked=true` with a reason |
 | LS-S7-08 | `C:\` | direct children, no recursion |
 | LS-S7-09 | Rename the folder's contents | files really change; a renamed subfolder leaves its contents' paths alone (all depth 0, no parent/child) |
+| LS-S7-10 | roots = one readable, one missing | `blocked=true` and `items` empty (no rows read before the failure) |
+| LS-S7-11 | One same-named file from each of two folders, renamed in one batch | both `Ready` (different folders are not duplicates); each is renamed in its own folder |
 
 ### S8 the minimal single-file path (new this round)
 
@@ -154,15 +156,16 @@ IDs are `LS-<layer>-<n>`. Each must be executable, asserted, and leave a file be
 This is a **protocol contract** case, not a business one. The host hands an item
 back as it came (`Items.cpp::itemToJson`), so a field the plugin put in `data`
 comes back as `item.data.*`; an `action()` that only looks at the top level
-answers "No files selected" to a row that plainly carries a batch. No pure-core
+answers "No files selected" to a row that plainly carries `openPaths`. No pure-core
 test can catch this — only a protocol round trip.
 
 | ID | Step | Expect |
 |---|---|---|
 | LS-S10-01 | Host-shaped item (`{data:{openFolder:…}}`) through `action` | takes effect (`hide`, or the reason in a build with no window); **never** "No files selected" |
-| LS-S10-02 | Host-shaped item (`{data:{batch:[…]}}`) through `action` | reports "Renamed N", and the disk really changed |
-| LS-S10-03 | `batch` straight at the top level (the old shape / the once-plugin path) | still works (both shapes accepted) |
-| LS-S10-04 | Each row's `data` vs `title`/`subtitle` in `items[]` | the same as `query()` sent, not rewritten by the host |
+| LS-S10-02 | Host-shaped item (`{data:{openWindow:true}}`) through `action` | opens an empty window (`hide`), not "No files selected" |
+| LS-S10-03 | Host-shaped item (`{data:{openPaths:[…]}}`) through `action` | the window's input set is exactly those paths (stderr lists each) |
+| LS-S10-04 | Host-shaped item (`{data:{openPath:"…"}}`) through `action` | the window's input set is that one path |
+| LS-S10-05 | Each row's `data` vs `title`/`subtitle` in `items[]` | the same as `query()` sent, not rewritten by the host |
 
 ## 3. Evidence
 

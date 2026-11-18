@@ -241,6 +241,7 @@ bool RegexCompiles(std::wstring_view pattern, bool caseSensitive);
 struct ItemSnapshot {
     std::string id;
     std::wstring leaf;
+    std::wstring parent;                 // the folder it sits in; targets conflict within one folder
     bool isFolder = false;
     unsigned depth = 0;
     std::size_t pathLength = 0;          // full original path, for the length delta
@@ -349,6 +350,7 @@ enum class Action { Rename, Delete };
 
 struct PlanItem {
     std::string id;            // stable per entry, survives mode switches
+    std::wstring parent;       // the folder this row's name lives in
     std::wstring originalLeaf;
     std::wstring targetLeaf;
     Status status = Status::Init;

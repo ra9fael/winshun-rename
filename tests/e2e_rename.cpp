@@ -307,6 +307,16 @@ int main()
         const rename_win::EnumerateResult missingListed = rename_win::Enumerate(missing);
         Check(missingListed.blocked, "LS-S7-07 a missing root blocks the set");
 
+        // LS-S7-10: a root that reads and one that does not still block the
+        // whole set. Keeping the readable half would present a batch that is
+        // not the selection the user made.
+        rename_win::EnumerateRequest partial;
+        partial.roots = {folder, root + L"\\also-gone"};
+        partial.listContents = true;
+        const rename_win::EnumerateResult partialListed = rename_win::Enumerate(partial);
+        Check(partialListed.blocked && partialListed.items.empty(),
+              "LS-S7-10 a partly unreadable selection yields no rows");
+
         // LS-S7-06: without listContents the folder is the row (old behaviour).
         rename_win::EnumerateRequest asItem;
         asItem.roots = {folder};
@@ -375,6 +385,74 @@ int main()
               "LS-S7-09 the files took their new names");
         Check(Exists(folder + L"\\new_dir\\inner.txt"),
               "LS-S7-09 the renamed subfolder kept its contents in place");
+    }
+
+    // ---- case 6c (LS-S7-11): one batch from two folders ---------------------
+    // A keyword search hands over files from several folders. Two files with the
+    // same name are different files: each row renames in its own folder, and the
+    // plan must neither call them duplicates nor order one after the other.
+    {
+        const std::wstring span = root + L"\\span";
+        const std::wstring a = span + L"\\a";
+        const std::wstring b = span + L"\\b";
+        ::CreateDirectoryW(span.c_str(), nullptr);
+        ::CreateDirectoryW(a.c_str(), nullptr);
+        ::CreateDirectoryW(b.c_str(), nullptr);
+        CreateFileWithText(a + L"\\same.txt");
+        CreateFileWithText(b + L"\\same.txt");
+
+        rename_win::EnumerateRequest request;
+        request.roots = {a + L"\\same.txt", b + L"\\same.txt"};
+        const rename_win::EnumerateResult collected = rename_win::Enumerate(request);
+        Check(collected.items.size() == 2, "LS-S7-11 both folders' files are rows");
+        Check(collected.items.size() == 2 && collected.items[0].parent == a
+              && collected.items[1].parent == b,
+              "LS-S7-11 each row carries its own folder");
+
+        std::vector<rename_core::ItemSnapshot> items;
+        for (const rename_win::CollectedItem& entry : collected.items)
+        {
+            rename_core::ItemSnapshot snapshot;
+            snapshot.id = entry.id;
+            snapshot.leaf = entry.leaf;
+            snapshot.parent = entry.parent;
+            snapshot.isFolder = entry.isFolder;
+            snapshot.depth = entry.depth;
+            snapshot.pathLength = entry.pathLength;
+            snapshot.templateContext = rename_win::BuildTemplateContext(entry, 0);
+            items.push_back(std::move(snapshot));
+        }
+
+        rename_core::Rule rule;
+        rule.scope = rename_core::Scope::Name;
+        rule.search = L"same";
+        rule.replace = L"span";
+        rename_core::RuleChain chain;
+        chain.rules.push_back(rule);
+
+        const rename_core::PreviewPlan plan =
+            rename_core::BuildControlPlan(items, chain, 0, rename_core::NextPlanId());
+        Check(plan.CountByStatus(rename_core::Status::Ready) == 2,
+              "LS-S7-11 same-named files in two folders are both ready");
+
+        std::vector<rename_win::ExecuteItem> batch;
+        for (std::size_t i = 0; i < plan.items.size() && i < collected.items.size(); ++i)
+        {
+            rename_win::ExecuteItem entry;
+            entry.fullPath = collected.items[i].fullPath;
+            entry.targetLeaf = plan.items[i].targetLeaf;
+            entry.isFolder = plan.items[i].isFolder;
+            entry.depth = plan.items[i].depth;
+            batch.push_back(entry);
+        }
+        const rename_win::ExecuteResult executed = rename_win::Execute(batch, root);
+        int renamed = 0;
+        for (const rename_win::ExecuteResultItem& result : executed.items)
+            if (result.outcome == rename_win::ExecuteOutcome::Renamed)
+                ++renamed;
+        Check(renamed == 2, "LS-S7-11 both folders' files renamed on disk");
+        Check(Exists(a + L"\\span.txt") && Exists(b + L"\\span.txt"),
+              "LS-S7-11 each file took its new name in its own folder");
     }
 
     // ---- case 6b (LS-S7-10): a target that is another row's current name -----

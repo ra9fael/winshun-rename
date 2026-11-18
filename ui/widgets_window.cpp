@@ -436,6 +436,81 @@ private:
     const Theme* m_theme = nullptr;
 };
 
+// Text elided from the left, keeping the end: a path's last segments are what
+// tell two rows apart, and Qt's ElideMiddle spends the room on the drive.
+QString ElideLeft(const QFontMetrics& metrics, const QString& text, int width)
+{
+    if (metrics.horizontalAdvance(text) <= width)
+        return text;
+    const QString ellipsis = QStringLiteral("…");
+    int drop = 0;
+    while (drop < text.size() && metrics.horizontalAdvance(ellipsis + text.mid(drop)) > width)
+        ++drop;
+    return ellipsis + text.mid(drop);
+}
+
+// Paints the original column: the name, and — only when the batch spans folders
+// — its folder after it in the faint colour, elided in the middle. Two files
+// called "same.txt" from different folders must not look like one row twice,
+// and the name must keep the room it needs, which the stock delegate's
+// middle-elided display string cannot do.
+class OriginalDelegate : public QStyledItemDelegate
+{
+public:
+    explicit OriginalDelegate(const Theme* theme, QObject* parent = nullptr)
+        : QStyledItemDelegate(parent)
+        , m_theme(theme)
+    {
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        if (!m_theme)
+            return;
+
+        painter->save();
+        if (option.state & QStyle::State_Selected)
+            painter->fillRect(option.rect, m_theme->selection);
+        else if (option.state & QStyle::State_MouseOver)
+            painter->fillRect(option.rect, m_theme->hover);
+
+        const QString name = index.data(rename_qml::PreviewModel::OriginalRole).toString();
+        const QString folder = index.data(rename_qml::PreviewModel::ParentRole).toString();
+        const QFontMetrics metrics(option.font);
+        const int flags = Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine;
+        const int room = option.rect.width() - 6;
+        const int nameWidth = metrics.horizontalAdvance(name);
+        const QString separator = QStringLiteral("  ·  ");
+        const int separatorWidth = metrics.horizontalAdvance(separator);
+
+        painter->setFont(option.font);
+        if (folder.isEmpty() || nameWidth + separatorWidth + 40 > room)
+        {
+            painter->setPen(m_theme->text);
+            painter->drawText(option.rect.adjusted(2, 0, -4, 0), flags,
+                              metrics.elidedText(name, Qt::ElideRight, room));
+            painter->restore();
+            return;
+        }
+
+        const QRect nameCell(option.rect.left() + 2, option.rect.top(), nameWidth, option.rect.height());
+        painter->setPen(m_theme->text);
+        painter->drawText(nameCell, flags, name);
+
+        const int tail = room - nameWidth - separatorWidth;
+        painter->setPen(m_theme->faint);
+        painter->drawText(QRect(nameCell.right() + 1, option.rect.top(), separatorWidth, option.rect.height()),
+                          flags, separator);
+        painter->drawText(QRect(nameCell.right() + 1 + separatorWidth, option.rect.top(), tail,
+                                option.rect.height()), flags, ElideLeft(metrics, folder, tail));
+        painter->restore();
+    }
+
+private:
+    const Theme* m_theme = nullptr;
+};
+
 } // namespace
 
 Window::Window(rename_qml::Bridge* bridge, QWidget* parent)
@@ -806,6 +881,7 @@ void Window::BuildUi()
     m_table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
     m_table->setColumnWidth(3, 78);
     m_table->setItemDelegateForColumn(0, new CheckDelegate(m_theme, m_table));
+    m_table->setItemDelegateForColumn(1, new OriginalDelegate(m_theme, m_table));
     m_table->setItemDelegateForColumn(2, new TargetDelegate(m_theme, m_table));
     m_tableStack->addWidget(m_table);
 
