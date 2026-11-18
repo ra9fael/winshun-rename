@@ -29,6 +29,21 @@
 - `span-folders.png`：跨目录同名两个文件——两行都“可改”，原始列显示 `same.txt · …\span\a` / `…\span\b`，悬停给完整目录。
 - `blocked-selection.png`：`alpha.txt` 加一个不存在的路径：0 行、红字说明找不到的路径、底部显示原因、`重命名` 按钮不可用。
 
+## 发布（v0.5.1）
+
+- tag `v0.5.1`（annotated，`de653b73`）指向 `442936b`；`package/plugin.json` 与 `CHANGELOG.md` 里的版本都是 0.5.1。
+- 工作流 `build-and-release` 的运行 44396106759（tag 推送触发）：build 与 publish 两个作业都成功。
+- Release `v0.5.1` 已发布，资产：
+
+  | 资产 | 大小 | sha256 |
+  |---|---|---|
+  | `ra9fael.rename-0.5.1.wsplugin` | 3,629,720 | `1b9fa78f05d15d99d98121a12416d0e4f90893df5d6f30e543b2312fbc046428` |
+  | `ra9fael.rename-0.5.1.wsplugin.sha256` | 96 | — |
+
+  下载回来的包重算 sha256 与 `.sha256` 资产、GitHub 记录的 digest 三者一致。
+- 用下载到的资产 `ws plugin install`：0.5.1，`state=on`、`status=ready`，权限 `ui`/`files:read`/`files:write`。
+- 本机 `dist/` 里另有一个同源码打出的包（`a2e1ce58…`，3,628,175 字节）；两者大小不同只因压缩里的时间戳。
+
 ## 复现
 
 ```powershell
