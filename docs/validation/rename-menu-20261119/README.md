@@ -44,6 +44,26 @@
 - 用下载到的资产 `ws plugin install`：0.5.1，`state=on`、`status=ready`，权限 `ui`/`files:read`/`files:write`。
 - 本机 `dist/` 里另有一个同源码打出的包（`a2e1ce58…`，3,628,175 字节）；两者大小不同只因压缩里的时间戳。
 
+## 发布入口（0.5.1 之后）
+
+`.github/workflows/release.yml` 改成「只有新建的版本 tag 才发版」：
+
+- 触发器只有两类：`push` 的 `v[0-9]+.[0-9]+.[0-9]+` tag，和 `workflow_dispatch`。
+- 每个作业的 `if:` 都含 `github.event.created && !github.event.deleted`；`build` 另外断言 `github.ref_type == 'tag'` 与 `v<清单版本>`。删 tag、挪 tag 都只到达 `if` 就被挡掉，不跑构建、不碰 Release。
+- `workflow_dispatch` 只做验证：必填 `source_ref` 指向已存在的 tag，先确认该 tag 在 origin 上且指向本次检出的提交，再构建、跑测试、打包，并校验包里的 `plugin.json` 是 `ra9fael.rename` 的同一版本；`publish` 作业被 `if` 排除，不写 Release、不传资产。
+- 发布作业先读远端状态：release 已存在且资产名与本次完全一致 → 幂等成功、不覆盖；资产不同 → 停。tag 必须指向本次运行的提交；tag 由人创建，作业从不建或挪，上传是一次 `gh release create --verify-tag`。
+- 第三方 action 固定到完整 commit SHA（checkout `11d5960a`、upload-artifact `ea165f8d`、download-artifact `d3f86a10`、install-qt-action `b344308e`）。
+
+实测：
+
+| 观测 | 结果 |
+|---|---|
+| 分支推送 `294feb8`（含工作流改动） | 没有产生任何运行 |
+| `workflow_dispatch`（`source_ref=v0.5.1`），运行 44404047824 | build 全绿，含「Check the package is this plugin and this version」；publish 作业 0 秒跳过；Release 列表与 `v0.5.1` 资产未变 |
+| 推送 `v0.5.1`（改动前的旧工作流） | 运行 44396106759，build + publish 全绿，产出上表资产 |
+
+未实测：删 tag / 挪 tag 的跳过路径。造出 `deleted` 事件必须先有一个匹配版本模式的 tag，而创建它会先跑一次构建，所以只能靠上面的 `if:` 守卫与代码阅读，没有为它制造一次运行。
+
 ## 复现
 
 ```powershell
