@@ -1,0 +1,14 @@
+started pid=62064 exe=D:\dev\github\winshun-dev\ra9fael.rename\rename.exe
+[  OK  ] initialize answered
+[  OK  ] initialize within 3000ms
+[  OK  ] initialize names the plugin
+initialize took 38 ms
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"openWindow":true},"icon":"ph:textbox","id":"batch.hint","subtitle":"按 Enter 打开窗口；窗口里可以选择文件夹","title":"打开批量重
+[  OK  ] query answered
+query returned 1 item(s)
+   - [batch.hint] 打开批量重命名…  |  按 Enter 打开窗口；窗口里可以选择文件夹
+[  OK  ] window row answered
+[  OK  ] window row opened an empty window
+[  OK  ] shutdown answered
+
+all checks passed

@@ -874,6 +874,34 @@ TEST_CASE(VimQuitRefusesPendingEditsUnlessForced)
     CHECK_EQ(h.text1(), QStringLiteral("y 1 alpha.txt\ny 2 beta.txt"));
 }
 
+TEST_CASE(GoingUpKeepsTheTextTab)
+{
+    // Reported: from the text tab, "up one level" dropped the user back on the
+    // rule tab. Navigation is a new input set, not a new task, so the tab stays
+    // and the buffer is rebuilt from the folder that is now open.
+    QTemporaryDir temp;
+    const QString root = temp.path();
+    QDir().mkpath(root + QStringLiteral("/sub"));
+    QFile alpha(root + QStringLiteral("/alpha.txt"));
+    QFile beta(root + QStringLiteral("/sub/beta.txt"));
+    CHECK(alpha.open(QIODevice::WriteOnly));
+    CHECK(beta.open(QIODevice::WriteOnly));
+    alpha.close();
+    beta.close();
+
+    rename_qml::Bridge bridge;
+    bridge.SetDataDir(root.toStdWString());
+    bridge.setFolder(root + QStringLiteral("/sub"), false);
+    CHECK(bridge.forceSwitchMode(QStringLiteral("text")));
+    CHECK_EQ(bridge.mode(), QStringLiteral("text"));
+    CHECK(bridge.buffer().contains(QStringLiteral("beta.txt")));
+
+    bridge.goUp();
+    CHECK_EQ(bridge.mode(), QStringLiteral("text"));
+    CHECK(bridge.buffer().contains(QStringLiteral("alpha.txt")));
+    CHECK(!bridge.buffer().contains(QStringLiteral("beta.txt")));
+}
+
 int main(int argc, char** argv)
 {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))

@@ -34,11 +34,5 @@ manifest: VIOLATION
 A bool setting with "default": true, named by triggers.files.if, and
 minWinShun >= 0.33.0 is what makes the menu switch real.
 exit=1
----- no-search-permission
-manifest: VIOLATION
-  - main.cpp asks for search_files, but the manifest does not declare winshun:search
-
-A bool setting with "default": true, named by triggers.files.if, and
-minWinShun >= 0.33.0 is what makes the menu switch real.
-exit=1
-all 6 variants refused
+all 5 variants refused
+action payload: clean

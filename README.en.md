@@ -16,8 +16,9 @@ Requires Win顺 0.33.0 or newer: the result-menu switch uses `triggers.files.if`
 
 - Right-click: select files or folders and use "Batch rename…" in the result menu; the window's input set is exactly those items. The plugin card's "Show Rename in file result menus" (on by default) governs that entry only — keywords keep working with it off, and the plugin stays enabled.
 - Current folder: while searching inside a folder, the first row "Batch rename in this folder…" opens the window on that folder's direct children.
-- Keywords: `br`, `pl`, `rename` or 批量重命名 enter keyword mode. Typing a name after it searches WinShun's index by file name: the first row "Batch rename the N matches…" opens the window on every match and the rows after it open one file each; Enter on an empty keyword opens an empty window.
+- Keywords: `br`, `pl`, `rename` or 批量重命名 enter keyword mode; Enter opens an empty window.
 - Batches may span folders: duplicate-name detection compares within one folder only, so same-named files in different folders do not conflict; each row carries its folder, and the tooltip has the whole path.
+- Navigation keeps the tab: going up, refreshing or opening another folder from the text tab leaves you on the text tab, with the buffer rebuilt for the new folder.
 
 ## Permissions
 
@@ -26,7 +27,6 @@ Requires Win顺 0.33.0 or newer: the result-menu switch uses `triggers.files.if`
 | `ui` | The plugin's own window: table, rule column, text buffer |
 | `files:read` | List the selected folder's entries, read names and size/write-time attributes (to verify file identity before and after), and the image metadata that metadata templates use (jpg/jpeg/png/tif/tiff/heic/heif/avif only, screened by extension first) |
 | `files:write` | Rename; deletes go through Shell `IFileOperation` to the Recycle Bin |
-| `winshun:search` | Searching WinShun's file-name index when a name follows the keyword (`search_files`; names and paths only) |
 
 No network, no launching programs outside the package, ordinary user rights. A batch changes file names, never file contents.
 

@@ -710,7 +710,11 @@ void Bridge::setFolder(const QString& folder, bool recursive)
     // are the input set. Same presenter, same plan, same executor as a selection
     // — "here is a folder" and "here are these files" only differ in where the
     // rows come from.
-    m_presenter.SetMode(rename_ui::Mode::Control);
+    //
+    // Navigation keeps the tab the user is on: going up from the text mode has
+    // to leave them in the text mode, with the new folder's items in the buffer.
+    // The old buffer described the old set, so it is rebuilt either way.
+    const bool text = m_presenter.CurrentMode() == rename_ui::Mode::Text;
     m_presenter.SetBuffer({});
     m_presenter.SetOilTable({});
     m_presenter.SetFilter(rename_ui::Filter::All);
@@ -730,6 +734,8 @@ void Bridge::setFolder(const QString& folder, bool recursive)
         m_doneLine.clear();
         m_blockedLine = ToQt(collected.blockReason);
         m_presenter.SetItems({});
+        if (text)
+            m_presenter.SetMode(rename_ui::Mode::Text);
         PublishRows();
         emit changed();
         emit countsChanged();
@@ -753,6 +759,11 @@ void Bridge::setFolder(const QString& folder, bool recursive)
     }
 
     m_presenter.ReplaceItems(std::move(items));
+    if (text)
+    {
+        m_presenter.SetMode(rename_ui::Mode::Text);
+        BuildOilTable();
+    }
     m_folder = folder;
     PublishRows();
     emit changed();

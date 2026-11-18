@@ -1,13 +1,16 @@
 # Changelog
 
+## [0.5.1] - 2026-11-19
+
+- Going up, refreshing or opening another folder from the text tab keeps the text tab: the buffer is rebuilt for the new folder instead of dropping back to the rule tab.
+
 ## [0.5.0] - 2026-11-19
 
 - New "Show Rename in file result menus" switch: `triggers.files.if` names the `showInFileMenu` bool setting (on by default), so the result-menu entry disappears when it is off while keywords keep working. Requires Win顺 0.33.0.
-- A name typed after the keyword searches WinShun's index by file name: the first row "Batch rename the N matches…" opens the window on every match and the rows after it open one file each. This adds the `winshun:search` permission, which the plugin card asks you to confirm when you update.
 - The right-click entry takes the selection as its input set: one file is a one-row batch, one folder renames that folder, and no parent-directory or folder-content scan happens; a folder's contents come from "Batch rename in this folder".
 - Batches may span folders: batch duplicates and "the target is another row's current name" are decided per folder, so same-named files in different folders neither conflict nor wait for each other; each row shows its folder.
 - Fixed: a selection with an unreadable path now yields no rows at all (enumeration used to keep what it had read before the failure); the window stays empty, shows the reason and cannot execute.
-- New manifest gate `tools/check-manifest.ps1` (ctest `manifest_menu_switch`): `files.if` must name a bool setting that defaults to on, `minWinShun` must be at least 0.33.0, and using `search_files` requires declaring `winshun:search`.
+- New manifest gate `tools/check-manifest.ps1` (ctest `manifest_menu_switch`): `files.if` must name a bool setting that defaults to on, and `minWinShun` must be at least 0.33.0.
 
 ## [0.4.5] - 2026-11-17
 

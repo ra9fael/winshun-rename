@@ -21,7 +21,6 @@ param(
     [string]$Folder,
     [string[]]$Files,
     [string]$QueryText,     # e.g. "report -> 报告"; the keyword box's own text
-    [string[]]$Hits,         # the paths Win顺's index answers the query with
     [string]$Rule,           # "<find>`n<replace>" for the window grab hook
     [switch]$Apply,
     [string]$Grab,
@@ -37,8 +36,6 @@ if (-not (Test-Path $Exe)) { throw "exe not found: $Exe" }
 if (-not (Test-Path (Join-Path $HostDir "Qt6Core.dll"))) { throw "host Qt not found under $HostDir" }
 
 $failures = 0
-# @($null) is an array of one in PowerShell: a missing -Hits has to be zero.
-$hitList = @($Hits | Where-Object { $_ })
 function Check([bool]$ok, [string]$label, [string]$detail = "") {
     if ($ok) { Write-Host "[  OK  ] $label" }
     else { Write-Host "[ FAIL ] $label $detail"; $script:failures++ }
@@ -149,35 +146,13 @@ $queryMsg = @{ jsonrpc = "2.0"; id = 2; method = "query"; params = $queryParams 
 $proc.StandardInput.WriteLine(($queryMsg | ConvertTo-Json -Depth 12 -Compress))
 $proc.StandardInput.Flush()
 
-# A query may call winshun/tool first (search_files), so answer it like the host:
-# read lines until the query's own id comes back. Synchronous reads: one pending
+# Read lines until the query's own id comes back. Synchronous reads: one pending
 # read per stream, which is what keeps the pipe from throwing.
 $rows = $null
 while ($true) {
     $line = Read-Line
     if ($null -eq $line) { break }
     Write-Host "  <- $($line.Substring(0, [Math]::Min(160, $line.Length)))"
-    if ($line -match '"method"\s*:\s*"winshun/tool"') {
-        # Pretend to be the host: the reply is the tool's structured result, flat
-        # (WinShun's Host::onToolCall answers with `result.structured`).
-        $request = $line | ConvertFrom-Json
-        $id = $request.id
-        Write-Host ("        (asked for " + $request.params.name + ")")
-        if ($Folder -and $QueryText) {
-            # The launcher was inside a folder: the search has to stay in it.
-            $scoped = @($request.params.arguments.folders) -contains $Folder
-            Check $scoped "search kept the folder scope" "($line)"
-        }
-        $items = @()
-        foreach ($p in $hitList) {
-            if (-not $p) { continue }
-            $items += @{ path = [System.IO.Path]::GetFullPath($p); name = (Split-Path -Leaf $p); type = "file" }
-        }
-        $reply = @{ jsonrpc = "2.0"; id = $id; result = @{ items = $items; returned = $items.Count; truncated = $false; elapsed_ms = 1 } }
-        $proc.StandardInput.WriteLine(($reply | ConvertTo-Json -Depth 12 -Compress))
-        $proc.StandardInput.Flush()
-        continue
-    }
     if ($line -match '"id"\s*:\s*2\b') {
         $rows = $line | ConvertFrom-Json
         break
@@ -211,33 +186,19 @@ if ($rows) {
             "folder row acted on its payload" "($acted)"
     }
 
-    # The keyword search: the batch row carries every path Win顺's index answered
-    # with; acting on it opens the window on exactly those.
-    $allRow = $rows.result.items | Where-Object { $_.data -and $_.data.openPaths } | Select-Object -First 1
-    if ($QueryText) {
-        if ($hitList.Count -eq 0) {
-            $noneRow = $rows.result.items | Where-Object { $_.id -eq "batch.none" } | Select-Object -First 1
-            Check ($null -ne $noneRow) "search said it found nothing" "(no batch.none row)"
+    # The keyword's own row: it opens the window with nothing in it.
+    $windowRow = $rows.result.items | Where-Object { $_.data -and $_.data.openWindow } | Select-Object -First 1
+    if ($windowRow) {
+        $act = @{
+            jsonrpc = "2.0"; id = 6; method = "action"
+            params = @{ command = "rename"; action = "default"; item = $windowRow; text = "" }
         }
-        else {
-            Check ($null -ne $allRow) "search returned a batch row" "(none carried openPaths)"
-            $oneRows = @($rows.result.items | Where-Object { $_.data -and $_.data.openPath })
-            Check ($oneRows.Count -ge 1) "search returned per-file rows" "($($oneRows.Count))"
-            if ($allRow) {
-                Check (@($allRow.data.openPaths).Count -eq $hitList.Count) `
-                    "batch row carries every match" "($(@($allRow.data.openPaths).Count) vs $($hitList.Count))"
-                $act = @{
-                    jsonrpc = "2.0"; id = 6; method = "action"
-                    params = @{ command = "rename"; action = "default"; item = $allRow; text = "" }
-                }
-                $proc.StandardInput.WriteLine(($act | ConvertTo-Json -Depth 12 -Compress))
-                $proc.StandardInput.Flush()
-                $acted = Read-Line
-                Check ($null -ne $acted -and $acted -match '"id":6') "batch row answered" "($acted)"
-                Check ($null -ne $acted -and ($acted -match '"hide"' -or $acted -match 'no window|没有窗口')) `
-                    "batch row opened the window on the matches" "($acted)"
-            }
-        }
+        $proc.StandardInput.WriteLine(($act | ConvertTo-Json -Depth 12 -Compress))
+        $proc.StandardInput.Flush()
+        $acted = Read-Line
+        Check ($null -ne $acted -and $acted -match '"id":6') "window row answered" "($acted)"
+        Check ($null -ne $acted -and ($acted -match '"hide"' -or $acted -match 'no window|没有窗口')) `
+            "window row opened an empty window" "($acted)"
     }
 }
 
@@ -277,15 +238,9 @@ if ($stderr) {
 if ($Files) {
     # The plugin writes the selection it received to stderr; that line is the
     # record that every path arrived, not just a count.
-    Check ($stderr -match ('window: count=' + $chosen.Count)) "files action received the selection" "($stderr)"
+    Check ($stderr -match ('files trigger: count=' + $chosen.Count)) "files action received the selection" "($stderr)"
     foreach ($path in $chosen) {
         Check ($stderr.Contains($path)) "files action received $path" "($stderr)"
-    }
-}
-if ($QueryText -and $Hits) {
-    Check ($stderr -match ('window: count=' + $hitList.Count)) "search batch received the matches" "($stderr)"
-    foreach ($path in $hitList) {
-        Check ($stderr.Contains([System.IO.Path]::GetFullPath($path))) "search batch received $path" "($stderr)"
     }
 }
 

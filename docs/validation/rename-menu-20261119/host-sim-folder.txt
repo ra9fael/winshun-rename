@@ -1,0 +1,14 @@
+started pid=81956 exe=D:\dev\github\winshun-dev\ra9fael.rename\rename.exe
+[  OK  ] initialize answered
+[  OK  ] initialize within 3000ms
+[  OK  ] initialize names the plugin
+initialize took 48 ms
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"openFolder":"C:\\Users\\renfei\\AppData\\Local\\Temp\\opencode\\rename-051\\sub"},"icon":"ph:textbox","id":
+[  OK  ] query answered
+query returned 1 item(s)
+   - [batch.here] 在此文件夹批量重命名…  |  打开批量重命名窗口，列出这个文件夹里的项目 · C:\Users\renfei\AppData\Local\Temp\opencode\rename-051\sub
+[  OK  ] folder row answered
+[  OK  ] folder row acted on its payload
+[  OK  ] shutdown answered
+
+all checks passed

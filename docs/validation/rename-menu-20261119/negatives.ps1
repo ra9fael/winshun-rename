@@ -38,10 +38,6 @@ NewVariant 'default-false' { param($doc) $doc.settings[0].default = $false }
 NewVariant 'not-bool' { param($doc) $doc.settings[0].type = 'text' }
 NewVariant 'floor-0.32.0' { param($doc) $doc.minWinShun = '0.32.0' }
 NewVariant 'wrong-key' { param($doc) $doc.commands[0].triggers[0].files.if = 'showInMenu' }
-NewVariant 'no-search-permission' {
-    param($doc)
-    $doc.permissions = @($doc.permissions | Where-Object { $_ -ne 'winshun:search' })
-}
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 if ($failed -eq 0) { Write-Host "all $($script:variants) variants refused"; exit 0 }

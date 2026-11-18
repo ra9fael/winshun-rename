@@ -84,17 +84,6 @@ else {
     $problems.Add('minWinShun is missing; the host version that honours files.if has to be stated')
 }
 
-# The keyword rows ask Win顺's index (main.cpp: tool("search_files")). The host
-# refuses that call without the permission, and the row then says search is
-# unavailable — a shipped feature that quietly is not there.
-$main = Join-Path (Split-Path -Parent $PSScriptRoot) 'main.cpp'
-if ((Test-Path -LiteralPath $main) -and
-    ((Get-Content -LiteralPath $main -Raw) -match 'tool\("search_files"')) {
-    if (-not (@($doc.permissions) -contains 'winshun:search')) {
-        $problems.Add('main.cpp asks for search_files, but the manifest does not declare winshun:search')
-    }
-}
-
 if ($problems.Count -eq 0) {
     Write-Host 'manifest: clean'
     exit 0

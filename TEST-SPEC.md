@@ -16,7 +16,7 @@
 
 不证明（本轮明确不测，写下来避免误以为测过）：
 
-- 宿主 `files` 触发、`search_files` 工具往返、共享 Qt 契约、提权、撤销栈、SMB、DPI、读屏、发布包。
+- 宿主 `files` 触发、共享 Qt 契约、提权、撤销栈、SMB、DPI、读屏、发布包。
 
 ## 1. 层次与判定
 
@@ -152,15 +152,14 @@
 
 ### S10 宿主往返：行携带的 `data`（本轮新增）
 
-这是**协议契约**用例，不是业务用例。宿主把 item 原样回传（`Items.cpp::itemToJson`），插件放在 `data` 里的字段就以 `item.data.*` 回来；`action()` 只看顶层，就会对一行明明带着 `openPaths` 的结果回答"没有选中文件"。这一条不可能被纯核心测试覆盖，只能靠协议往返。
+这是**协议契约**用例，不是业务用例。宿主把 item 原样回传（`Items.cpp::itemToJson`），插件放在 `data` 里的字段就以 `item.data.*` 回来；`action()` 只看顶层，就会对一行明明带着 `openFolder` 的结果回答"没有选中文件"。这一条不可能被纯核心测试覆盖，只能靠协议往返。
 
 | ID | 步骤 | 预期 |
 |---|---|---|
 | LS-S10-01 | 宿主形态的 item（`{data:{openFolder:…}}`）走 `action` | 生效（`hide`，或在无窗口构建里说明原因）；**不得**是"没有选中文件" |
 | LS-S10-02 | 宿主形态的 item（`{data:{openWindow:true}}`）走 `action` | 打开空窗口（`hide`），不是"没有选中文件" |
-| LS-S10-03 | 宿主形态的 item（`{data:{openPaths:[…]}}`）走 `action` | 窗口的输入集就是这些路径（stderr 逐条记下） |
-| LS-S10-04 | 宿主形态的 item（`{data:{openPath:"…"}}`）走 `action` | 窗口的输入集就是这一个 |
-| LS-S10-05 | `items[]` 里每行的 `data` 与 `title`/`subtitle` | 与 `query()` 发出的一致，没有被宿主改写 |
+| LS-S10-03 | `files` 触发带多条路径走 `action` | 窗口的输入集就是这些路径，stderr 记下 `files trigger: count=N` 并逐条列出 |
+| LS-S10-04 | `items[]` 里每行的 `data` 与 `title`/`subtitle` | 与 `query()` 发出的一致，没有被宿主改写 |
 
 ## 3. 证据与留痕
 

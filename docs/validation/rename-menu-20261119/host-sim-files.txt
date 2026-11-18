@@ -1,22 +1,24 @@
-started pid=49296 exe=D:\dev\github\winshun-dev\ra9fael.rename\dist\rename-menu-validation\plugin\rename.exe
+started pid=87024 exe=D:\dev\github\winshun-dev\ra9fael.rename\rename.exe
 [  OK  ] initialize answered
 [  OK  ] initialize within 3000ms
 [  OK  ] initialize names the plugin
-initialize took 39 ms
-  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"openWindow":true},"icon":"ph:textbox","id":"batch.hint","subtitle":"按 Enter 打开窗口；窗口里可以选择文件夹。在 rename 后面打名字可
+initialize took 28 ms
+  <- {"id":2,"jsonrpc":"2.0","result":{"items":[{"data":{"openWindow":true},"icon":"ph:textbox","id":"batch.hint","subtitle":"按 Enter 打开窗口；窗口里可以选择文件夹","title":"打开批量重
 [  OK  ] query answered
 query returned 1 item(s)
-   - [batch.hint] 打开批量重命名…  |  按 Enter 打开窗口；窗口里可以选择文件夹。在 rename 后面打名字可以直接搜索
+   - [batch.hint] 打开批量重命名…  |  按 Enter 打开窗口；窗口里可以选择文件夹
+[  OK  ] window row answered
+[  OK  ] window row opened an empty window
 [  OK  ] files action answered
 [  OK  ] files action opened the window
 [  OK  ] shutdown answered
 --- stderr ---
-[rename] window: count=2
-[rename]   C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\a\same.txt
-[rename]   C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\b
+[rename] files trigger: count=2 chars=125
+[rename]   C:\Users\renfei\AppData\Local\Temp\opencode\rename-051\alpha.txt
+[rename]   C:\Users\renfei\AppData\Local\Temp\opencode\rename-051\span\b
 
 [  OK  ] files action received the selection
-[  OK  ] files action received C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\a\same.txt
-[  OK  ] files action received C:\Users\renfei\AppData\Local\Temp\opencode\rename-search2\span\b
+[  OK  ] files action received C:\Users\renfei\AppData\Local\Temp\opencode\rename-051\alpha.txt
+[  OK  ] files action received C:\Users\renfei\AppData\Local\Temp\opencode\rename-051\span\b
 
 all checks passed

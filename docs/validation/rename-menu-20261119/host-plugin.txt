@@ -1,13 +1,12 @@
 {
   "id": "ra9fael.rename",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "state": "on",
   "status": "ready",
   "enabled": true,
   "permissions": [
     "files:write",
     "ui",
-    "winshun:search",
     "files:read"
   ],
   "error": null

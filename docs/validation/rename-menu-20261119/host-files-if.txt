@@ -8,5 +8,5 @@ INFO   : TestPlugin::filesTriggerSettingChecked() entering
 PASS   : TestPlugin::filesTriggerSettingChecked()
 INFO   : TestPlugin::cleanupTestCase() entering
 PASS   : TestPlugin::cleanupTestCase()
-Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 15ms
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 18ms
 ********* Finished testing of TestPlugin *********

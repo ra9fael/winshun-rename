@@ -97,7 +97,6 @@ target_include_directories(rename PRIVATE "${CMAKE_SOURCE_DIR}")
 # an optional target (see RENAME_BUILD_QT below).
 add_library(rename_ui STATIC
     ui/presenter.cpp
-    ui/search_rows.cpp
 )
 target_include_directories(rename_ui PUBLIC "${CMAKE_SOURCE_DIR}")
 target_link_libraries(rename_ui PUBLIC rename_core)
@@ -129,7 +128,7 @@ endforeach()
 # The workspace convention (ra9fael.volume, cursorwrap, bright) is a zero-dependency
 # Catch2-style harness in tests/test_harness.h rather than an external framework.
 # rename_core has no OS dependency, so this target links only the C runtime.
-add_executable(rename_tests tests/test_core.cpp tests/test_presenter.cpp tests/test_search_rows.cpp)
+add_executable(rename_tests tests/test_core.cpp tests/test_presenter.cpp)
 target_link_libraries(rename_tests PRIVATE rename_core rename_ui)
 target_compile_definitions(rename_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 if(MSVC)
