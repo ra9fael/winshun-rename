@@ -64,6 +64,23 @@
 
 未实测：删 tag / 挪 tag 的跳过路径。造出 `deleted` 事件必须先有一个匹配版本模式的 tag，而创建它会先跑一次构建，所以只能靠上面的 `if:` 守卫与代码阅读，没有为它制造一次运行。
 
+## 发布（v0.5.2）
+
+0.5.2 是 0.5.1 的文档版本：包里带的中英 README 还写着 0.4.5，安装 0.5.1 后文档与版本自相矛盾；代码没有变化。
+
+- tag `v0.5.2` 指向 `cdf75c5`；`package/plugin.json` 与 `CHANGELOG.md` 都是 0.5.2。
+- 这是新发布入口的第一次真实 tag 发布：运行 44406201513，`build` 与 `publish` 都成功。
+- Release `v0.5.2` 资产：
+
+  | 资产 | 大小 | sha256 |
+  |---|---|---|
+  | `ra9fael.rename-0.5.2.wsplugin` | 3,629,738 | `177ebb2a43704697f5946754ff34f100b42ea8e33ab2a88e20b6d82d1b5fa05b` |
+  | `ra9fael.rename-0.5.2.wsplugin.sha256` | 96 | — |
+
+  下载回来重算的 sha256 与 `.sha256` 资产、GitHub 的 digest 三者一致。
+- 下载的包里 `plugin.json` 是 0.5.2，`README.md` / `README.en.md` 都写着本版；`ws plugin install` 后是 0.5.2、`state=on`、`status=ready`。
+- 本机 `dist/` 另有一份同源码打出的包（`00dfa186…`，3,628,194 字节）。
+
 ## 复现
 
 ```powershell
