@@ -1,15 +1,24 @@
-# release.yml — build, test, package and publish on a version tag.
+# release.yml — build, test, package and publish on a new version tag.
 #
-# Same shape as the other plugins' release workflow: pushing a vX.Y.Z tag runs
-# the whole suite on a clean runner, packages the tested binaries with
-# tools/pack.ps1, and attaches the .wsplugin plus its sha256 to a GitHub
-# release. workflow_dispatch builds and verifies without publishing.
+# The tag is the entry: a vX.Y.Z tag that did not exist before. Deleting a tag
+# or moving one also arrives as a push event, so every job checks
+# `github.event.created` before doing anything; a deletion builds nothing and
+# publishes nothing.
+#
+# workflow_dispatch is the manual check before the tag exists on the remote: it
+# builds, tests, packages and verifies the package made from an existing tag,
+# and never writes a release. Publishing is the tag push's job alone.
 name: build-and-release
 
 on:
   push:
-    tags: ["v*.*.*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Existing vX.Y.Z tag to build and verify
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -21,16 +30,20 @@ concurrency:
 jobs:
   build:
     runs-on: windows-2022
+    # A tag deletion arrives here too: only a newly created tag builds. The
+    # dispatch path is manual verification and never publishes.
+    if: github.event_name == 'workflow_dispatch' || (github.event.created && !github.event.deleted)
     defaults:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
           submodules: recursive
 
       - name: Install matching Qt kit
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
         with:
           version: '6.12.0'
           arch: win64_msvc2022_64
@@ -57,22 +70,40 @@ jobs:
           [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "root=$root`n")
           Write-Output "Qt kit: $root"
 
-      - name: Validate tag, manifest and changelog
+      - name: Validate the tag, the manifest and the changelog
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
           $manifest = Get-Content package/plugin.json -Raw -Encoding utf8 | ConvertFrom-Json
           $version = $manifest.version
-          if (-not ($version -match '^\d+\.\d+\.\d+$')) { throw "Bad version '$version'" }
-          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:RELEASE_TAG -ne "v$version") {
-            throw "Tag '$($env:RELEASE_TAG)' does not match manifest version v$version"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Bad version '$version'" }
+          # The ref is the one thing that decides whether a release happens:
+          # a branch, a moved tag or a missing tag must stop here, not publish.
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            if ($env:GITHUB_REF_TYPE -ne 'tag') { throw "A release is a tag push, not a $($env:GITHUB_REF_TYPE) push" }
+            if ($env:GITHUB_REF_NAME -ne "v$version") {
+              throw "Tag '$($env:GITHUB_REF_NAME)' does not match manifest version v$version"
+            }
+          }
+          else {
+            if ($env:SOURCE_REF -notmatch '^v\d+\.\d+\.\d+$') { throw "source_ref '$($env:SOURCE_REF)' is not a vX.Y.Z tag" }
+            if ($env:SOURCE_REF -ne "v$version") {
+              throw "source_ref '$($env:SOURCE_REF)' does not match manifest version v$version"
+            }
+            $lines = @(git ls-remote origin "refs/tags/$($env:SOURCE_REF)" "refs/tags/$($env:SOURCE_REF)^{}")
+            $peeled = $lines | Where-Object { $_ -match '\^\{\}$' } | ForEach-Object { ($_ -split "`t")[0] }
+            $sha = if ($peeled) { $peeled } else { ($lines | Select-Object -First 1) -split "`t" | Select-Object -First 1 }
+            if (-not $sha) { throw "tag $($env:SOURCE_REF) is not on origin; push it before verifying it" }
+            if ($sha -ne (git rev-parse HEAD).Trim()) {
+              throw "tag $($env:SOURCE_REF) points at $sha, not at the commit checked out"
+            }
           }
           $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
           if ($changelog -notmatch "(?m)^## \[$version\]") {
             throw "CHANGELOG.md has no [$version] section"
           }
-          Write-Output "Validated $($manifest.id) $version"
+          Write-Output "Validated $($manifest.id) $version from $env:SOURCE_REF"
 
       - name: Configure
         run: cmake -S . -B build/ci -A x64 -DRENAME_BUILD_QT=ON -DCMAKE_PREFIX_PATH="${{ steps.qt.outputs.root }}"
@@ -94,9 +125,28 @@ jobs:
       - name: Package the tested binaries
         run: pwsh -File tools/pack.ps1 -BuildDir build/ci -OutDir dist/ci
 
+      - name: Check the package is this plugin and this version
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content package/plugin.json -Raw -Encoding utf8 | ConvertFrom-Json
+          $package = Get-ChildItem dist/ci -Filter *.wsplugin | Select-Object -First 1
+          if (-not $package) { throw 'pack.ps1 produced no .wsplugin' }
+          $stage = Join-Path $env:TEMP ("verify-" + [guid]::NewGuid().ToString("N"))
+          try {
+            [IO.Compression.ZipFile]::ExtractToDirectory($package.FullName, $stage)
+            $inner = Get-Content (Join-Path $stage 'plugin.json') -Raw -Encoding utf8 | ConvertFrom-Json
+            if ($inner.id -ne $manifest.id) { throw "package holds $($inner.id), not $($manifest.id)" }
+            if ($inner.version -ne $manifest.version) { throw "package holds $($inner.version), not $($manifest.version)" }
+            foreach ($file in 'rename.exe', 'Qt6Widgets.dll') {
+              if (-not (Test-Path (Join-Path $stage $file))) { throw "package has no $file" }
+            }
+            Write-Output "Package identity: $($inner.id) $($inner.version)"
+          }
+          finally {
+            Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Write checksum and release notes
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
           $package = Get-ChildItem dist/ci -Filter *.wsplugin | Select-Object -First 1
@@ -116,7 +166,7 @@ jobs:
           [IO.File]::WriteAllText("$PWD/dist/ci/release-notes.md", (($section -join "`n").Trim() + "`n"), (New-Object Text.UTF8Encoding($false)))
           Get-Content dist/ci/release-notes.md -Encoding utf8 | Select-Object -First 5
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verified-package
           path: dist/ci/
@@ -124,12 +174,14 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'push'
+    # The release itself: only a tag that was just created, never a deletion,
+    # a moved tag or the manual build.
+    if: github.event_name == 'push' && github.event.created && !github.event.deleted
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: verified-package
           path: dist/ci
@@ -138,13 +190,46 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; refusing to overwrite." >&2
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "not a version tag: $TAG" >&2
             exit 1
           fi
-          gh release create "$tag" --verify-tag --title "$tag" \
+
+          # Read the remote state first: a re-run must neither duplicate nor
+          # overwrite anything.
+          if names=$(gh api "repos/$GH_REPO/releases/tags/$TAG" --jq '.assets[].name' 2> api.err); then
+            mapfile -t have < <(printf '%s\n' "$names" | sort)
+            mapfile -t wanted < <(cd dist/ci && ls *.wsplugin *.wsplugin.sha256 | sort)
+            if [[ "${have[*]}" == "${wanted[*]}" ]]; then
+              echo "Release $TAG already holds these assets; nothing to do."
+              exit 0
+            fi
+            echo "Release $TAG exists with other assets: ${have[*]}" >&2
+            exit 1
+          elif grep -q 'HTTP 404' api.err; then
+            :
+          else
+            cat api.err >&2
+            exit 1
+          fi
+
+          # The tag must exist and point at this commit; the job never creates
+          # or moves one.
+          ref=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')
+          type=${ref%% *}
+          sha=${ref##* }
+          if [[ "$type" == "tag" ]]; then
+            sha=$(gh api "repos/$GH_REPO/git/tags/$sha" --jq '.object.sha')
+          fi
+          if [[ "$sha" != "$COMMIT" ]]; then
+            echo "tag $TAG points at $sha, not at $COMMIT" >&2
+            exit 1
+          fi
+
+          gh release create "$TAG" --verify-tag --title "$TAG" \
             --notes-file dist/ci/release-notes.md \
             dist/ci/*.wsplugin dist/ci/*.wsplugin.sha256
