@@ -36,7 +36,7 @@ Win顺 的批量重命名插件：右键选中的文件或文件夹打开工作�
 
 ## Vim 模式
 
-文本模式支持 Vim 按键，默认关闭。核心是独立的可移植库 [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore)（纯 C++20，无 Qt、无 Win32），以 submodule 挂在 `vendor/vimcore`；Qt 适配层 `ui/vim_qt.*` 留在本仓库，选择记在 `<dataDir>/settings.json`。
+文本模式支持 Vim 按键，默认关闭。核心是独立的可移植库 [`vimcore`](https://github.com/ra9fael/vimcore)（纯 C++20，无 Qt、无 Win32），以 submodule 挂在 `vendor/vimcore`；Qt 适配层 `ui/vim_qt.*` 留在本仓库，选择记在 `<dataDir>/settings.json`。
 
 支持 `h j k l w b e 0 ^ $ gg G f F t T %`、`i a I A o O s R`、`d c y` 配 motion（含 `f F t T` 与 `;`/`,` 重复，`d;`/`d,` 按上次查找）、文本对象与叠用（`dd cc yy D C S x X Y p P J r ~`）、`v`/`V`/Ctrl+Q 选区（含块选）与选区 `r` 一字符替换、计数前缀、`.` 重放、Ctrl+A/X 数字增减、Ctrl+D/U/F/B 翻页，以及 `:` 命令行（查找替换、`:s`、`:%s`、`:q`、`:q!`）。非插入模式下输入法不向缓冲区漏字。
 

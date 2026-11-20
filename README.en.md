@@ -36,7 +36,7 @@ The window is Qt Widgets: `ui/widgets_window.*` holds the table, rule column and
 
 ## Vim mode
 
-Text mode can take Vim keys; it is off by default. The core is the portable [`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore) library (pure C++20, no Qt, no Win32) in this repo as the `vendor/vimcore` submodule; the Qt adapter `ui/vim_qt.*` stays here, and the choice is stored in `<dataDir>/settings.json`.
+Text mode can take Vim keys; it is off by default. The core is the portable [`vimcore`](https://github.com/ra9fael/vimcore) library (pure C++20, no Qt, no Win32) in this repo as the `vendor/vimcore` submodule; the Qt adapter `ui/vim_qt.*` stays here, and the choice is stored in `<dataDir>/settings.json`.
 
 Covered: `h j k l w b e 0 ^ $ gg G f F t T %`; `i a I A o O s R`; `d c y` with motions (including `f F t T` and the `;`/`,` repeats, `d;`/`d,` reusing the last find), text objects and doubled forms (`dd cc yy D C S x X Y p P J r ~`); `v`/`V`/Ctrl+Q selections including block-wise, with `r` replacing the selection with one character; count prefixes; `.` repeat; Ctrl+A/X; Ctrl+D/U/F/B paging; and the `:` command line (find/replace, `:s`, `:%s`, `:q`, `:q!`). Outside Insert mode an input method does not leak text into the buffer.
 

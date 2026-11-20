@@ -157,7 +157,7 @@ if(RENAME_BUILD_QT)
     qt_standard_project_setup()
 
     # ---- vimcore: the portable modal editing core ---------------------------
-    # A git submodule (vendor/vimcore, github.com/ra9fael/winshun-vimcore) with
+    # A git submodule (vendor/vimcore, github.com/ra9fael/vimcore) with
     # no Qt or Win32 dependency of its own; only the Qt build needs it, because
     # only the text editor uses it. `--recurse-submodules` is documented in the
     # README: without the submodule the file is simply absent and this branch

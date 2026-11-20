@@ -1,7 +1,7 @@
 # Vim 模式
 
 文本模式（oil 模式）可以启用 Vim 按键。功能本身由独立的可移植库
-[`winshun-vimcore`](https://github.com/ra9fael/winshun-vimcore) 提供，本仓库只放 Qt 适配层。
+[`vimcore`](https://github.com/ra9fael/vimcore) 提供，本仓库只放 Qt 适配层。
 
 ## 组成
 
